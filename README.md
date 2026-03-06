@@ -53,7 +53,7 @@ const serde_dep = b.dependency("serde", .{
 exe.root_module.addImport("serde", serde_dep.module("serde"));
 ```
 
-Requires Zig 0.14.0 or later.
+Requires Zig 0.15.0 or later.
 
 ## Formats
 
