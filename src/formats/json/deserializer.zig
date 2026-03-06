@@ -22,11 +22,16 @@ pub const DeserializeError = error{
 
 pub const Deserializer = struct {
     scanner: Scanner,
+    borrow_strings: bool = false,
 
     pub const Error = DeserializeError;
 
     pub fn init(input: []const u8) Deserializer {
         return .{ .scanner = .{ .input = input } };
+    }
+
+    pub fn initBorrowed(input: []const u8) Deserializer {
+        return .{ .scanner = .{ .input = input }, .borrow_strings = true };
     }
 
     pub fn deserializeBool(self: *Deserializer) Error!bool {
@@ -61,13 +66,16 @@ pub const Deserializer = struct {
         switch (tok) {
             .string => |raw| {
                 if (!Scanner.stringHasEscapes(raw)) {
+                    if (self.borrow_strings) return raw;
                     const copy = allocator.alloc(u8, raw.len) catch return error.OutOfMemory;
                     @memcpy(copy, raw);
                     return copy;
                 }
+                if (self.borrow_strings) return error.InvalidEscape;
                 return try unescapeString(allocator, raw);
             },
             .null_lit => {
+                if (self.borrow_strings) return "";
                 const empty = allocator.alloc(u8, 0) catch return error.OutOfMemory;
                 return empty;
             },
@@ -159,7 +167,7 @@ pub const Deserializer = struct {
     pub fn deserializeStruct(self: *Deserializer, comptime _: type) Error!MapAccess {
         const tok = try self.scanner.next();
         if (tok != .object_begin) return error.WrongType;
-        return .{ .scanner = &self.scanner };
+        return .{ .scanner = &self.scanner, .borrow_strings = self.borrow_strings };
     }
 
     pub fn deserializeSeq(self: *Deserializer, comptime T: type, allocator: Allocator) Error!T {
@@ -200,6 +208,7 @@ pub const Deserializer = struct {
 
 pub const MapAccess = struct {
     scanner: *Scanner,
+    borrow_strings: bool = false,
 
     pub const Error = DeserializeError;
 
@@ -217,7 +226,7 @@ pub const MapAccess = struct {
     }
 
     pub fn nextValue(self: *MapAccess, comptime T: type, allocator: Allocator) Error!T {
-        var deser = Deserializer{ .scanner = self.scanner.* };
+        var deser = Deserializer{ .scanner = self.scanner.*, .borrow_strings = self.borrow_strings };
         const result = try core_deserialize.deserialize(T, allocator, &deser);
         self.scanner.* = deser.scanner;
         return result;

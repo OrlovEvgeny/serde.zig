@@ -73,6 +73,28 @@ fn isMapLike(comptime T: type) bool {
     return @hasDecl(T, "getOrPut") and @hasDecl(T, "iterator");
 }
 
+/// Extract the key type from a HashMap-like type via its KV declaration.
+pub fn MapKeyType(comptime T: type) type {
+    if (@hasDecl(T, "KV")) {
+        return @TypeOf(@as(T.KV, undefined).key);
+    }
+    @compileError(@typeName(T) ++ " has no KV decl; cannot extract map key type");
+}
+
+/// Extract the value type from a HashMap-like type via its KV declaration.
+pub fn MapValueType(comptime T: type) type {
+    if (@hasDecl(T, "KV")) {
+        return @TypeOf(@as(T.KV, undefined).value);
+    }
+    @compileError(@typeName(T) ++ " has no KV decl; cannot extract map value type");
+}
+
+/// Managed HashMaps store an allocator internally; unmanaged ones don't.
+/// Distinguishes put(key, val) vs put(allocator, key, val).
+pub fn isMapManaged(comptime T: type) bool {
+    return @hasDecl(T, "Unmanaged");
+}
+
 /// Extract the child type from optionals, pointers, slices, arrays.
 pub fn Child(comptime T: type) type {
     return switch (@typeInfo(T)) {

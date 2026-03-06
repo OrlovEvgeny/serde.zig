@@ -31,7 +31,12 @@ pub fn serialize(
         .@"union" => return serializeUnion(T, value, serializer),
         .@"enum" => return serializeEnum(T, value, serializer),
         .map => return serializeMap(T, value, serializer),
-        .bytes => return serializer.serializeString(value),
+        .bytes => {
+            if (comptime @hasDecl(@TypeOf(serializer.*), "serializeBytes")) {
+                return serializer.serializeBytes(value);
+            }
+            return serializer.serializeString(value);
+        },
         .custom => @compileError(@typeName(T) ++ " declares custom kind but no zerdeSerialize"),
     }
 }
@@ -70,18 +75,36 @@ fn serializeStruct(comptime T: type, value: T, serializer: anytype) @TypeOf(seri
     inline for (info.fields) |field| {
         if (comptime options.shouldSkipField(T, field.name, .serialize)) continue;
 
+        // Flattened fields: inline the sub-struct's fields at the parent level.
+        if (comptime options.isFlattenedField(T, field.name)) {
+            if (@typeInfo(field.type) != .@"struct")
+                @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
+            const nested = @field(value, field.name);
+            const nested_info = @typeInfo(field.type).@"struct";
+            inline for (nested_info.fields) |sf| {
+                const nested_wire = comptime options.wireFieldName(field.type, sf.name);
+                try ss.serializeField(nested_wire, @field(nested, sf.name));
+            }
+            continue;
+        }
+
         const wire_name = comptime options.wireFieldName(T, field.name);
         const field_value = @field(value, field.name);
 
-        if (comptime options.isSkipIfNull(T, field.name)) {
-            if (field_value == null) continue;
-        }
+        const skip_null = comptime options.isSkipIfNull(T, field.name) and @typeInfo(field.type) == .optional;
+        const skip_empty = comptime options.isSkipIfEmpty(T, field.name) and @typeInfo(field.type) == .pointer;
 
-        if (comptime options.isSkipIfEmpty(T, field.name)) {
-            if (field_value.len == 0) continue;
-        }
+        const should_skip = (skip_null and field_value == null) or
+            (skip_empty and field_value.len == 0);
 
-        try ss.serializeField(wire_name, field_value);
+        if (!should_skip) {
+            if (comptime options.hasFieldWith(T, field.name)) {
+                const WithMod = comptime options.getFieldWith(T, field.name);
+                try ss.serializeField(wire_name, WithMod.serialize(field_value));
+            } else {
+                try ss.serializeField(wire_name, field_value);
+            }
+        }
     }
 
     return ss.end();
@@ -97,13 +120,26 @@ fn serializeTuple(comptime T: type, value: T, serializer: anytype) @TypeOf(seria
 }
 
 fn serializeUnion(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+    const tag_style = comptime options.getUnionTag(T);
+    if (tag_style == .external) {
+        return serializeUnionExternal(T, value, serializer);
+    } else if (tag_style == .internal) {
+        return serializeUnionInternal(T, value, serializer);
+    } else if (tag_style == .adjacent) {
+        return serializeUnionAdjacent(T, value, serializer);
+    } else {
+        return serializeUnionUntagged(T, value, serializer);
+    }
+}
+
+fn serializeUnionExternal(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
     const info = @typeInfo(T).@"union";
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
-            const payload = @field(value, field.name);
             if (field.type == void) {
                 return serializer.serializeString(field.name);
             } else {
+                const payload = @field(value, field.name);
                 var ss = try serializer.beginStruct();
                 try ss.serializeField(field.name, payload);
                 return ss.end();
@@ -112,7 +148,65 @@ fn serializeUnion(comptime T: type, value: T, serializer: anytype) @TypeOf(seria
     }
 }
 
+fn serializeUnionInternal(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+    const info = @typeInfo(T).@"union";
+    const tag_field_name = comptime options.getTagField(T);
+    inline for (info.fields) |field| {
+        if (value == @field(T, field.name)) {
+            var ss = try serializer.beginStruct();
+            try ss.serializeField(tag_field_name, @as([]const u8, field.name));
+            if (field.type == void) {
+                return ss.end();
+            } else {
+                const payload_info = @typeInfo(field.type);
+                if (payload_info != .@"struct")
+                    @compileError("Internal tagging requires struct payloads, got " ++ @typeName(field.type));
+                const payload = @field(value, field.name);
+                inline for (payload_info.@"struct".fields) |sf| {
+                    try ss.serializeField(sf.name, @field(payload, sf.name));
+                }
+                return ss.end();
+            }
+        }
+    }
+}
+
+fn serializeUnionAdjacent(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+    const info = @typeInfo(T).@"union";
+    const tag_field_name = comptime options.getTagField(T);
+    const content_field_name = comptime options.getContentField(T);
+    inline for (info.fields) |field| {
+        if (value == @field(T, field.name)) {
+            var ss = try serializer.beginStruct();
+            try ss.serializeField(tag_field_name, @as([]const u8, field.name));
+            if (field.type != void) {
+                const payload = @field(value, field.name);
+                try ss.serializeField(content_field_name, payload);
+            }
+            return ss.end();
+        }
+    }
+}
+
+fn serializeUnionUntagged(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+    const info = @typeInfo(T).@"union";
+    inline for (info.fields) |field| {
+        if (value == @field(T, field.name)) {
+            if (field.type == void) {
+                return serializer.serializeNull();
+            } else {
+                const payload = @field(value, field.name);
+                return serialize(field.type, payload, serializer);
+            }
+        }
+    }
+}
+
 fn serializeEnum(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+    if (comptime options.getEnumRepr(T) == .integer) {
+        const tag_type = @typeInfo(T).@"enum".tag_type;
+        return serializer.serializeInt(@as(tag_type, @intFromEnum(value)));
+    }
     return serializer.serializeString(@tagName(value));
 }
 
@@ -379,6 +473,31 @@ test "serialize tagged union with void payload" {
     defer mock.deinit();
     try serialize(Cmd, .ping, &mock);
     try testing.expectEqualStrings("ping", mock.events.items[0].string_val);
+}
+
+test "serialize union internal tagging" {
+    const Command = union(enum) {
+        ping: void,
+        execute: struct { query: []const u8 },
+
+        pub const serde = .{
+            .tag = options.UnionTag.internal,
+            .tag_field = "type",
+        };
+    };
+
+    comptime {
+        std.debug.assert(options.getUnionTag(Command) == .internal);
+    }
+
+    var mock = MockSerializer.init(testing.allocator);
+    defer mock.deinit();
+    try serialize(Command, .ping, &mock);
+    // Internal tagging for void: {"type":"ping"}
+    try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
+    try testing.expectEqual(TestEvent{ .field = "type" }, mock.events.items[1]);
+    try testing.expectEqualStrings("ping", mock.events.items[2].string_val);
+    try testing.expectEqual(TestEvent.struct_end, mock.events.items[3]);
 }
 
 test "serialize tagged union with payload" {

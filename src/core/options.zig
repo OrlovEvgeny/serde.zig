@@ -10,6 +10,18 @@ pub const SkipMode = enum {
     empty,
 };
 
+pub const EnumRepr = enum {
+    string,
+    integer,
+};
+
+pub const UnionTag = enum {
+    external,
+    internal,
+    adjacent,
+    untagged,
+};
+
 pub const Direction = enum {
     serialize,
     deserialize,
@@ -120,6 +132,64 @@ pub fn getSerdeDefault(comptime T: type, comptime field_name: []const u8) @TypeO
     return @field(T.serde.default, field_name);
 }
 
+/// Resolve the enum representation for a type (string or integer).
+pub fn getEnumRepr(comptime T: type) EnumRepr {
+    if (!hasSerdeOptions(T)) return .string;
+    const opts = T.serde;
+    if (@hasDecl(@TypeOf(opts), "enum_repr") or @hasField(@TypeOf(opts), "enum_repr"))
+        return opts.enum_repr;
+    return .string;
+}
+
+/// Resolve the union tag representation.
+pub fn getUnionTag(comptime T: type) UnionTag {
+    if (!hasSerdeOptions(T)) return .external;
+    const opts = T.serde;
+    if (@hasDecl(@TypeOf(opts), "tag") or @hasField(@TypeOf(opts), "tag"))
+        return opts.tag;
+    return .external;
+}
+
+/// Get the tag field name for internal/adjacent tagged unions.
+pub fn getTagField(comptime T: type) []const u8 {
+    if (hasSerdeOptions(T)) {
+        const opts = T.serde;
+        if (@hasDecl(@TypeOf(opts), "tag_field") or @hasField(@TypeOf(opts), "tag_field"))
+            return opts.tag_field;
+    }
+    return "type";
+}
+
+/// Get the content field name for adjacent tagged unions.
+pub fn getContentField(comptime T: type) []const u8 {
+    if (hasSerdeOptions(T)) {
+        const opts = T.serde;
+        if (@hasDecl(@TypeOf(opts), "content_field") or @hasField(@TypeOf(opts), "content_field"))
+            return opts.content_field;
+    }
+    return "content";
+}
+
+/// Whether a field should be flattened into the parent struct.
+pub fn isFlattenedField(comptime T: type, comptime field_name: []const u8) bool {
+    if (!hasSerdeOptions(T)) return false;
+    const opts = T.serde;
+    if (!@hasDecl(@TypeOf(opts), "flatten") and !@hasField(@TypeOf(opts), "flatten")) return false;
+    const flatten = opts.flatten;
+    for (flatten) |f| {
+        if (std.mem.eql(u8, f, field_name)) return true;
+    }
+    return false;
+}
+
+/// Get the list of flattened field names.
+pub fn getFlattenFields(comptime T: type) []const []const u8 {
+    if (!hasSerdeOptions(T)) return &.{};
+    const opts = T.serde;
+    if (!@hasDecl(@TypeOf(opts), "flatten") and !@hasField(@TypeOf(opts), "flatten")) return &.{};
+    return opts.flatten;
+}
+
 /// Whether a field has a custom with module.
 pub fn hasFieldWith(comptime T: type, comptime field_name: []const u8) bool {
     if (!hasSerdeOptions(T)) return false;
@@ -128,9 +198,9 @@ pub fn hasFieldWith(comptime T: type, comptime field_name: []const u8) bool {
     return @hasField(@TypeOf(opts.with), field_name);
 }
 
-/// Get the with module for a field.
+/// Get the with module type for a field.
 pub fn getFieldWith(comptime T: type, comptime field_name: []const u8) type {
-    return @TypeOf(@field(T.serde.with, field_name));
+    return @field(T.serde.with, field_name);
 }
 
 // Tests.

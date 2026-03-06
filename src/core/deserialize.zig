@@ -25,14 +25,31 @@ pub fn deserialize(
         .void => deserializer.deserializeVoid(),
         .optional => deserializer.deserializeOptional(Child(T), allocator),
         .@"struct" => deserializeStructFields(T, allocator, deserializer),
-        .@"enum" => deserializer.deserializeEnum(T),
-        .@"union" => deserializer.deserializeUnion(T, allocator),
+        .@"enum" => deserializeEnum(T, deserializer),
+        .@"union" => deserializeUnionDispatch(T, allocator, deserializer),
         .array => deserializeArray(T, allocator, deserializer),
         .slice => deserializer.deserializeSeq(T, allocator),
         .pointer => deserializePointer(T, allocator, deserializer),
         .tuple => deserializeTuple(T, allocator, deserializer),
+        .bytes => {
+            if (comptime @hasDecl(@TypeOf(deserializer.*), "deserializeBytes")) {
+                return deserializer.deserializeBytes(allocator);
+            }
+            return deserializer.deserializeString(allocator);
+        },
+        .map => deserializeMap(T, allocator, deserializer),
         else => @compileError("Cannot auto-deserialize: " ++ @typeName(T)),
     };
+}
+
+fn deserializeEnum(comptime T: type, deserializer: anytype) @TypeOf(deserializer.*).Error!T {
+    if (comptime opts.getEnumRepr(T) == .integer) {
+        const tag_type = @typeInfo(T).@"enum".tag_type;
+        const int_val = try deserializer.deserializeInt(tag_type);
+        return std.meta.intToEnum(T, int_val) catch
+            return deserializer.raiseError(error.UnexpectedToken);
+    }
+    return deserializer.deserializeEnum(T);
 }
 
 fn deserializeArray(
@@ -100,6 +117,16 @@ fn deserializeStructFields(
             }
             continue;
         }
+
+        // Initialize flattened sub-structs with their defaults.
+        if (comptime opts.isFlattenedField(T, field.name)) {
+            if (@typeInfo(field.type) != .@"struct")
+                @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
+            @field(result, field.name) = initWithDefaults(field.type);
+            fields_seen.set(i);
+            continue;
+        }
+
         if (comptime field.defaultValue()) |dv| {
             @field(result, field.name) = dv;
             fields_seen.set(i);
@@ -117,12 +144,35 @@ fn deserializeStructFields(
 
         inline for (info.fields, 0..) |field, i| {
             if (comptime opts.shouldSkipField(T, field.name, .deserialize)) continue;
+            if (comptime opts.isFlattenedField(T, field.name)) continue;
 
             const wire_name = comptime opts.wireFieldName(T, field.name);
             if (std.mem.eql(u8, key, wire_name)) {
-                @field(result, field.name) = try map.nextValue(field.type, allocator);
+                if (comptime opts.hasFieldWith(T, field.name)) {
+                    const WithMod = comptime opts.getFieldWith(T, field.name);
+                    const raw = try map.nextValue(WithMod.WireType, allocator);
+                    @field(result, field.name) = WithMod.deserialize(raw);
+                } else {
+                    @field(result, field.name) = try map.nextValue(field.type, allocator);
+                }
                 fields_seen.set(i);
                 matched = true;
+            }
+        }
+
+        // Check flattened struct fields.
+        if (!matched) {
+            inline for (info.fields) |field| {
+                if (comptime opts.isFlattenedField(T, field.name)) {
+                    const nested_info = @typeInfo(field.type).@"struct";
+                    inline for (nested_info.fields) |sf| {
+                        const nested_wire = comptime opts.wireFieldName(field.type, sf.name);
+                        if (std.mem.eql(u8, key, nested_wire)) {
+                            @field(@field(result, field.name), sf.name) = try map.nextValue(sf.type, allocator);
+                            matched = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -134,8 +184,9 @@ fn deserializeStructFields(
         }
     }
 
-    // Validate required fields.
+    // Validate required fields (skip flattened — they're initialized above).
     inline for (info.fields, 0..) |field, i| {
+        if (comptime opts.isFlattenedField(T, field.name)) continue;
         if (!fields_seen.isSet(i)) {
             if (@typeInfo(field.type) == .optional) {
                 @field(result, field.name) = null;
@@ -146,6 +197,237 @@ fn deserializeStructFields(
     }
 
     return result;
+}
+
+/// Initialize a struct with default values where available, undefined otherwise.
+fn initWithDefaults(comptime T: type) T {
+    const info = @typeInfo(T).@"struct";
+    var result: T = undefined;
+    inline for (info.fields) |field| {
+        if (comptime field.defaultValue()) |dv| {
+            @field(result, field.name) = dv;
+        } else if (@typeInfo(field.type) == .optional) {
+            @field(result, field.name) = null;
+        }
+    }
+    return result;
+}
+
+fn deserializeUnionDispatch(
+    comptime T: type,
+    allocator: Allocator,
+    deserializer: anytype,
+) @TypeOf(deserializer.*).Error!T {
+    const tag_style = comptime opts.getUnionTag(T);
+    return switch (tag_style) {
+        .external => deserializer.deserializeUnion(T, allocator),
+        .internal => deserializeUnionInternal(T, allocator, deserializer),
+        .adjacent => deserializeUnionAdjacent(T, allocator, deserializer),
+        .untagged => deserializeUnionUntagged(T, allocator, deserializer),
+    };
+}
+
+fn deserializeUnionInternal(
+    comptime T: type,
+    allocator: Allocator,
+    deserializer: anytype,
+) @TypeOf(deserializer.*).Error!T {
+    const info = @typeInfo(T).@"union";
+    const tag_field = comptime opts.getTagField(T);
+
+    // Parse as a struct map, find the tag field first.
+    var map = try deserializer.deserializeStruct(T);
+
+    // Collect all key-value pairs, looking for the tag.
+    var tag_name: ?[]const u8 = null;
+    // We need to buffer non-tag fields for the payload. Use a simple approach:
+    // read all keys, skip non-tag fields by tracking them.
+    // Because we can't rewind the deserializer, for internal tagging we require
+    // the tag field to appear first. Consume keys until we find it.
+    while (try map.nextKey(allocator)) |key| {
+        if (std.mem.eql(u8, key, tag_field)) {
+            tag_name = try map.nextValue([]const u8, allocator);
+            break;
+        }
+        // Skip non-tag fields that appear before the tag.
+        try map.skipValue();
+    }
+
+    const name = tag_name orelse return deserializer.raiseError(error.MissingField);
+
+    inline for (info.fields) |field| {
+        if (std.mem.eql(u8, name, field.name)) {
+            if (field.type == void) {
+                // Consume remaining fields.
+                while (try map.nextKey(allocator)) |_| {
+                    try map.skipValue();
+                }
+                return @unionInit(T, field.name, {});
+            }
+
+            const payload_info = @typeInfo(field.type);
+            if (payload_info != .@"struct")
+                @compileError("Internal tagging requires struct payloads for " ++ field.name);
+
+            // Read remaining map keys as struct fields.
+            var result: field.type = undefined;
+            var fields_seen = std.StaticBitSet(payload_info.@"struct".fields.len).initEmpty();
+
+            // Apply defaults.
+            inline for (payload_info.@"struct".fields, 0..) |sf, i| {
+                if (comptime sf.defaultValue()) |dv| {
+                    @field(result, sf.name) = dv;
+                    fields_seen.set(i);
+                }
+            }
+
+            while (try map.nextKey(allocator)) |field_key| {
+                var matched = false;
+                inline for (payload_info.@"struct".fields, 0..) |sf, i| {
+                    if (std.mem.eql(u8, field_key, sf.name)) {
+                        @field(result, sf.name) = try map.nextValue(sf.type, allocator);
+                        fields_seen.set(i);
+                        matched = true;
+                    }
+                }
+                if (!matched) try map.skipValue();
+            }
+
+            // Validate required fields.
+            inline for (payload_info.@"struct".fields, 0..) |sf, i| {
+                if (!fields_seen.isSet(i)) {
+                    if (@typeInfo(sf.type) == .optional) {
+                        @field(result, sf.name) = null;
+                    } else {
+                        return deserializer.raiseError(error.MissingField);
+                    }
+                }
+            }
+
+            return @unionInit(T, field.name, result);
+        }
+    }
+
+    return deserializer.raiseError(error.UnexpectedToken);
+}
+
+fn deserializeUnionAdjacent(
+    comptime T: type,
+    allocator: Allocator,
+    deserializer: anytype,
+) @TypeOf(deserializer.*).Error!T {
+    const info = @typeInfo(T).@"union";
+    const tag_field = comptime opts.getTagField(T);
+    const content_field = comptime opts.getContentField(T);
+
+    var map = try deserializer.deserializeStruct(T);
+
+    var tag_name: ?[]const u8 = null;
+    var found_content = false;
+    var result: ?T = null;
+
+    // Adjacent tagging: {"type": "variant", "content": <payload>}
+    // Read keys in any order, handling tag and content.
+    while (try map.nextKey(allocator)) |key| {
+        if (std.mem.eql(u8, key, tag_field)) {
+            tag_name = try map.nextValue([]const u8, allocator);
+        } else if (std.mem.eql(u8, key, content_field)) {
+            // Tag must already be known to parse content.
+            const name = tag_name orelse return deserializer.raiseError(error.UnexpectedToken);
+            found_content = true;
+            inline for (info.fields) |field| {
+                if (std.mem.eql(u8, name, field.name)) {
+                    if (field.type == void) {
+                        try map.skipValue();
+                        result = @unionInit(T, field.name, {});
+                    } else {
+                        const payload = try map.nextValue(field.type, allocator);
+                        result = @unionInit(T, field.name, payload);
+                    }
+                }
+            }
+        } else {
+            try map.skipValue();
+        }
+    }
+
+    if (result) |r| return r;
+
+    // If we got a tag but no content, check for void variants.
+    if (tag_name) |name| {
+        if (!found_content) {
+            inline for (info.fields) |field| {
+                if (field.type == void and std.mem.eql(u8, name, field.name))
+                    return @unionInit(T, field.name, {});
+            }
+        }
+    }
+
+    return deserializer.raiseError(error.MissingField);
+}
+
+fn deserializeMap(
+    comptime T: type,
+    allocator: Allocator,
+    deserializer: anytype,
+) @TypeOf(deserializer.*).Error!T {
+    const K = kind_mod.MapKeyType(T);
+    const V = kind_mod.MapValueType(T);
+    const managed = comptime kind_mod.isMapManaged(T);
+
+    var result: T = if (managed) T.init(allocator) else .{};
+
+    // Maps serialize as objects — reuse struct access to iterate key-value pairs.
+    var map = try deserializer.deserializeStruct(T);
+
+    while (try map.nextKey(allocator)) |key| {
+        const k: K = if (K == []const u8)
+            key
+        else if (@typeInfo(K) == .int)
+            std.fmt.parseInt(K, key, 10) catch return deserializer.raiseError(error.InvalidNumber)
+        else
+            @compileError("Unsupported map key type: " ++ @typeName(K));
+
+        const v = try map.nextValue(V, allocator);
+
+        if (managed) {
+            result.put(k, v) catch return deserializer.raiseError(error.OutOfMemory);
+        } else {
+            result.put(allocator, k, v) catch return deserializer.raiseError(error.OutOfMemory);
+        }
+    }
+
+    return result;
+}
+
+fn deserializeUnionUntagged(
+    comptime T: type,
+    allocator: Allocator,
+    deserializer: anytype,
+) @TypeOf(deserializer.*).Error!T {
+    const info = @typeInfo(T).@"union";
+
+    // Try each variant in declaration order. Save deserializer state before
+    // each attempt; restore on failure. Partial allocations on failed attempts
+    // are acceptable because ArenaAllocator is the documented pattern.
+    inline for (info.fields) |field| {
+        const saved = deserializer.*;
+        if (field.type == void) {
+            if (deserializer.deserializeVoid()) {
+                return @unionInit(T, field.name, {});
+            } else |_| {
+                deserializer.* = saved;
+            }
+        } else {
+            if (deserialize(field.type, allocator, deserializer)) |payload| {
+                return @unionInit(T, field.name, payload);
+            } else |_| {
+                deserializer.* = saved;
+            }
+        }
+    }
+
+    return deserializer.raiseError(error.UnexpectedToken);
 }
 
 // Tests with a mock deserializer.
