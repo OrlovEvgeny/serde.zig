@@ -197,7 +197,7 @@ pub const Scanner = struct {
         return token;
     }
 
-    fn skipWhitespace(self: *Scanner) void {
+    pub fn skipWhitespace(self: *Scanner) void {
         while (self.pos < self.input.len) {
             switch (self.input[self.pos]) {
                 ' ', '\t', '\n', '\r' => self.pos += 1,

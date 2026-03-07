@@ -49,7 +49,9 @@ pub fn toWriterSchema(allocator: std.mem.Allocator, writer: *std.io.Writer, valu
 /// Deserialize a value of type T from a MessagePack byte slice with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.init(input);
-    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    if (deser.pos != deser.input.len) return error.TrailingData;
+    return result;
 }
 
 /// Deserialize from a reader with an external schema.
@@ -63,7 +65,9 @@ pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: 
 /// Allocates copies of all strings and slices. Use an ArenaAllocator for easy cleanup.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.init(input);
-    return core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    if (deser.pos != deser.input.len) return error.TrailingData;
+    return result;
 }
 
 /// Deserialize a value of type T from a reader.

@@ -11,6 +11,7 @@ pub const DeserializeError = error{
     MissingField,
     Overflow,
     WrongType,
+    TrailingData,
 };
 
 pub const Deserializer = struct {
