@@ -39,6 +39,30 @@ pub fn build(b: *std.Build) void {
     const roundtrip_run = b.addRunArtifact(roundtrip_t);
     test_step.dependOn(&roundtrip_run.step);
 
+    // Additional test suites.
+    const extra_test_sources = [_][]const u8{
+        "test/stress_test.zig",
+        "test/edge_cases_test.zig",
+        "test/adversarial_test.zig",
+        "test/serde_options_test.zig",
+    };
+
+    for (extra_test_sources) |src| {
+        const mod = b.createModule(.{
+            .root_source_file = b.path(src),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "serde", .module = serde_mod },
+            },
+        });
+        const extra_t = b.addTest(.{
+            .root_module = mod,
+        });
+        const extra_run = b.addRunArtifact(extra_t);
+        test_step.dependOn(&extra_run.step);
+    }
+
     // Fuzz targets — build-only, no assertions. Compiled as static libraries
     // with the libFuzzer entry point for use with external fuzzers.
     const fuzz_step = b.step("fuzz", "Build fuzz targets");

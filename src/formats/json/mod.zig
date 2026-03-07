@@ -75,13 +75,17 @@ pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opts: Options,
 /// Deserialize a value of type T from a JSON byte slice with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.init(input);
-    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    try checkTrailingData(&deser);
+    return result;
 }
 
 /// Deserialize with zero-copy string borrowing and an external schema.
 pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.initBorrowed(input);
-    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    try checkTrailingData(&deser);
+    return result;
 }
 
 /// Deserialize from a reader with an external schema.
@@ -102,7 +106,9 @@ pub fn toPrettyWriter(writer: *std.io.Writer, value: anytype, opts: PrettyOption
 /// Allocates copies of all strings. Use an ArenaAllocator for easy bulk cleanup.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.init(input);
-    return core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    try checkTrailingData(&deser);
+    return result;
 }
 
 /// Deserialize a value of type T from a JSON byte slice, borrowing strings from the input.
@@ -111,7 +117,9 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 /// Still requires an allocator for structs, slices, and other heap-allocated structures.
 pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.initBorrowed(input);
-    return core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    try checkTrailingData(&deser);
+    return result;
 }
 
 /// Deserialize a value of type T from a reader.
@@ -129,6 +137,11 @@ pub fn fromFilePath(comptime T: type, allocator: std.mem.Allocator, path: []cons
     const content = try file.reader().readAllAlloc(allocator, 10 * 1024 * 1024);
     defer allocator.free(content);
     return fromSlice(T, allocator, content);
+}
+
+fn checkTrailingData(deser: *Deserializer) !void {
+    deser.scanner.skipWhitespace();
+    if (deser.scanner.pos != deser.scanner.input.len) return error.TrailingData;
 }
 
 fn readAll(allocator: std.mem.Allocator, reader: *std.io.Reader) ![]u8 {

@@ -76,6 +76,9 @@ fn deserializeArray(
     for (0..info.len) |i| {
         result[i] = try seq.nextElement(child, allocator) orelse return deserializer.raiseError(error.UnexpectedEof);
     }
+    // Consume the closing delimiter.
+    if (try seq.nextElement(child, allocator) != null)
+        return deserializer.raiseError(error.UnexpectedToken);
     return result;
 }
 
@@ -86,6 +89,7 @@ fn deserializePointer(
 ) @TypeOf(deserializer.*).Error!T {
     const child = Child(T);
     const val = try deserialize(child, allocator, deserializer);
+    errdefer freeAllocated(child, val, allocator);
     const ptr = try allocator.create(child);
     ptr.* = val;
     return ptr;
@@ -103,7 +107,50 @@ fn deserializeTuple(
         @field(result, field.name) = try seq.nextElement(field.type, allocator) orelse
             return deserializer.raiseError(error.UnexpectedEof);
     }
+    // Consume the closing delimiter. Use the first field type for the comptime parameter.
+    if (info.fields.len > 0) {
+        if (try seq.nextElement(info.fields[0].type, allocator) != null)
+            return deserializer.raiseError(error.UnexpectedToken);
+    }
     return result;
+}
+
+/// Release heap memory owned by a deserialized value. Walks the type tree at comptime
+/// and frees strings, slices, pointers, and recursively-owned struct/optional fields.
+/// Safe to call on values produced by the allocating (non-borrowed) deserialization path.
+/// For borrowed deserialization, use an ArenaAllocator so that free is a no-op.
+fn freeAllocated(comptime T: type, value: T, allocator: Allocator) void {
+    switch (comptime kind_mod.typeKind(T)) {
+        .string => allocator.free(value),
+        .slice => {
+            for (value) |elem| freeAllocated(@typeInfo(T).pointer.child, elem, allocator);
+            allocator.free(value);
+        },
+        .pointer => {
+            freeAllocated(@typeInfo(T).pointer.child, value.*, allocator);
+            allocator.destroy(value);
+        },
+        .@"struct" => {
+            inline for (@typeInfo(T).@"struct".fields) |field| {
+                freeAllocated(field.type, @field(value, field.name), allocator);
+            }
+        },
+        .optional => if (value) |v| freeAllocated(@typeInfo(T).optional.child, v, allocator),
+        .map => {
+            var mut = value;
+            mut.deinit();
+        },
+        else => {},
+    }
+}
+
+fn freeStructFields(comptime T: type, result: *T, fields_seen: anytype, allocator: Allocator) void {
+    const info = @typeInfo(T).@"struct";
+    inline for (info.fields, 0..) |field, i| {
+        if (fields_seen.isSet(i)) {
+            freeAllocated(field.type, @field(result, field.name), allocator);
+        }
+    }
 }
 
 /// Struct deserialization: iterate input keys, match against comptime-known fields.
@@ -117,6 +164,7 @@ fn deserializeStructFieldsSchema(
 
     var result: T = undefined;
     var fields_seen = std.StaticBitSet(info.fields.len).initEmpty();
+    errdefer freeStructFields(T, &result, fields_seen, allocator);
 
     // Apply compile-time and struct-level defaults.
     inline for (info.fields, 0..) |field, i| {
@@ -278,6 +326,7 @@ fn deserializeUnionInternalSchema(
 
             var result: field.type = undefined;
             var fields_seen = std.StaticBitSet(payload_info.@"struct".fields.len).initEmpty();
+            errdefer freeStructFields(field.type, &result, fields_seen, allocator);
 
             inline for (payload_info.@"struct".fields, 0..) |sf, i| {
                 if (comptime sf.defaultValue()) |dv| {
@@ -377,6 +426,14 @@ fn deserializeMap(
     const managed = comptime kind_mod.isMapManaged(T);
 
     var result: T = if (managed) T.init(allocator) else .{};
+    errdefer {
+        var it = result.iterator();
+        while (it.next()) |entry| {
+            freeAllocated(V, entry.value_ptr.*, allocator);
+            if (K == []const u8) freeAllocated(K, entry.key_ptr.*, allocator);
+        }
+        if (managed) result.deinit() else result.deinit(allocator);
+    }
 
     var map = try deserializer.deserializeStruct(T);
 

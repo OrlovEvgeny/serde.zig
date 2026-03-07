@@ -13,6 +13,7 @@ pub const DeserializeError = error{
     InvalidEscape,
     WrongType,
     Overflow,
+    TrailingData,
 };
 
 pub const Deserializer = struct {
@@ -193,7 +194,7 @@ pub const Deserializer = struct {
 
     // Scanning helpers.
 
-    fn skipWhitespace(self: *Deserializer) void {
+    pub fn skipWhitespace(self: *Deserializer) void {
         while (self.pos < self.input.len and isWhitespace(self.input[self.pos]))
             self.pos += 1;
     }
