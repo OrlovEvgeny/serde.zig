@@ -53,6 +53,43 @@ pub fn toPrettyWriter(writer: *std.io.Writer, value: anytype, opts: PrettyOption
     return toWriterWith(writer, value, .{ .pretty = true, .indent = opts.indent });
 }
 
+// Schema-aware API.
+
+/// Serialize a value to a ZON byte slice with an external schema.
+pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
+    return toSliceWithSchema(allocator, value, .{}, schema);
+}
+
+/// Serialize with options and an external schema.
+pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opt: Options, comptime schema: anytype) ![]u8 {
+    var aw: std.io.Writer.Allocating = .init(allocator);
+    try toWriterWithSchema(&aw.writer, value, opt, schema);
+    return aw.toOwnedSlice();
+}
+
+/// Serialize a value to a writer in ZON format with an external schema.
+pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+    return toWriterWithSchema(writer, value, .{}, schema);
+}
+
+/// Serialize with options to a writer with an external schema.
+pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opt: Options, comptime schema: anytype) !void {
+    var ser = Serializer.init(writer, opt);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+}
+
+/// Deserialize a value of type T from a ZON byte slice with an external schema.
+pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
+    var deser = Deserializer.init(input);
+    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+}
+
+/// Deserialize with zero-copy borrowing and an external schema.
+pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
+    var deser = Deserializer.initBorrowed(input);
+    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+}
+
 /// Deserialize a value of type T from a ZON byte slice.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.init(input);

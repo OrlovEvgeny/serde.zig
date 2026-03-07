@@ -13,6 +13,18 @@ pub fn deserialize(
     allocator: Allocator,
     deserializer: anytype,
 ) @TypeOf(deserializer.*).Error!T {
+    return deserializeSchema(T, allocator, deserializer, {});
+}
+
+/// Deserialize a value of type T with an external schema.
+/// Schema fields (rename, skip, default, deny_unknown_fields, etc.) override T.serde.
+/// Types with zerdeDeserialize bypass the schema entirely.
+pub fn deserializeSchema(
+    comptime T: type,
+    allocator: Allocator,
+    deserializer: anytype,
+    comptime schema: anytype,
+) @TypeOf(deserializer.*).Error!T {
     if (comptime opts.hasCustomDeserializer(T)) {
         return T.zerdeDeserialize(T, allocator, deserializer);
     }
@@ -24,9 +36,9 @@ pub fn deserialize(
         .string => deserializer.deserializeString(allocator),
         .void => deserializer.deserializeVoid(),
         .optional => deserializer.deserializeOptional(Child(T), allocator),
-        .@"struct" => deserializeStructFields(T, allocator, deserializer),
-        .@"enum" => deserializeEnum(T, deserializer),
-        .@"union" => deserializeUnionDispatch(T, allocator, deserializer),
+        .@"struct" => deserializeStructFieldsSchema(T, allocator, deserializer, schema),
+        .@"enum" => deserializeEnumSchema(T, deserializer, schema),
+        .@"union" => deserializeUnionDispatchSchema(T, allocator, deserializer, schema),
         .array => deserializeArray(T, allocator, deserializer),
         .slice => deserializer.deserializeSeq(T, allocator),
         .pointer => deserializePointer(T, allocator, deserializer),
@@ -42,8 +54,8 @@ pub fn deserialize(
     };
 }
 
-fn deserializeEnum(comptime T: type, deserializer: anytype) @TypeOf(deserializer.*).Error!T {
-    if (comptime opts.getEnumRepr(T) == .integer) {
+fn deserializeEnumSchema(comptime T: type, deserializer: anytype, comptime schema: anytype) @TypeOf(deserializer.*).Error!T {
+    if (comptime opts.getEnumReprSchema(T, schema) == .integer) {
         const tag_type = @typeInfo(T).@"enum".tag_type;
         const int_val = try deserializer.deserializeInt(tag_type);
         return std.meta.intToEnum(T, int_val) catch
@@ -95,10 +107,11 @@ fn deserializeTuple(
 }
 
 /// Struct deserialization: iterate input keys, match against comptime-known fields.
-fn deserializeStructFields(
+fn deserializeStructFieldsSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime schema: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     const info = @typeInfo(T).@"struct";
 
@@ -107,7 +120,7 @@ fn deserializeStructFields(
 
     // Apply compile-time and struct-level defaults.
     inline for (info.fields, 0..) |field, i| {
-        if (comptime opts.shouldSkipField(T, field.name, .deserialize)) {
+        if (comptime opts.shouldSkipFieldSchema(T, field.name, .deserialize, schema)) {
             if (comptime field.defaultValue()) |dv| {
                 @field(result, field.name) = dv;
                 fields_seen.set(i);
@@ -119,7 +132,7 @@ fn deserializeStructFields(
         }
 
         // Initialize flattened sub-structs with their defaults.
-        if (comptime opts.isFlattenedField(T, field.name)) {
+        if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) {
             if (@typeInfo(field.type) != .@"struct")
                 @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
             @field(result, field.name) = initWithDefaults(field.type);
@@ -131,8 +144,8 @@ fn deserializeStructFields(
             @field(result, field.name) = dv;
             fields_seen.set(i);
         }
-        if (comptime opts.hasSerdeDefault(T, field.name)) {
-            @field(result, field.name) = comptime opts.getSerdeDefault(T, field.name);
+        if (comptime opts.hasSerdeDefaultSchema(T, field.name, schema)) {
+            @field(result, field.name) = comptime opts.getSerdeDefaultSchema(T, field.name, schema);
             fields_seen.set(i);
         }
     }
@@ -143,13 +156,13 @@ fn deserializeStructFields(
         var matched = false;
 
         inline for (info.fields, 0..) |field, i| {
-            if (comptime opts.shouldSkipField(T, field.name, .deserialize)) continue;
-            if (comptime opts.isFlattenedField(T, field.name)) continue;
+            if (comptime opts.shouldSkipFieldSchema(T, field.name, .deserialize, schema)) continue;
+            if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) continue;
 
-            const wire_name = comptime opts.wireFieldName(T, field.name);
+            const wire_name = comptime opts.wireFieldNameSchema(T, field.name, schema);
             if (std.mem.eql(u8, key, wire_name)) {
-                if (comptime opts.hasFieldWith(T, field.name)) {
-                    const WithMod = comptime opts.getFieldWith(T, field.name);
+                if (comptime opts.hasFieldWithSchema(T, field.name, schema)) {
+                    const WithMod = comptime opts.getFieldWithSchema(T, field.name, schema);
                     const raw = try map.nextValue(WithMod.WireType, allocator);
                     @field(result, field.name) = WithMod.deserialize(raw);
                 } else {
@@ -163,7 +176,7 @@ fn deserializeStructFields(
         // Check flattened struct fields.
         if (!matched) {
             inline for (info.fields) |field| {
-                if (comptime opts.isFlattenedField(T, field.name)) {
+                if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) {
                     const nested_info = @typeInfo(field.type).@"struct";
                     inline for (nested_info.fields) |sf| {
                         const nested_wire = comptime opts.wireFieldName(field.type, sf.name);
@@ -177,7 +190,7 @@ fn deserializeStructFields(
         }
 
         if (!matched) {
-            if (comptime opts.denyUnknownFields(T)) {
+            if (comptime opts.denyUnknownFieldsSchema(T, schema)) {
                 return map.raiseError(error.UnknownField);
             }
             try map.skipValue();
@@ -186,7 +199,7 @@ fn deserializeStructFields(
 
     // Validate required fields (skip flattened — they're initialized above).
     inline for (info.fields, 0..) |field, i| {
-        if (comptime opts.isFlattenedField(T, field.name)) continue;
+        if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) continue;
         if (!fields_seen.isSet(i)) {
             if (@typeInfo(field.type) == .optional) {
                 @field(result, field.name) = null;
@@ -213,43 +226,38 @@ fn initWithDefaults(comptime T: type) T {
     return result;
 }
 
-fn deserializeUnionDispatch(
+fn deserializeUnionDispatchSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime schema: anytype,
 ) @TypeOf(deserializer.*).Error!T {
-    const tag_style = comptime opts.getUnionTag(T);
+    const tag_style = comptime opts.getUnionTagSchema(T, schema);
     return switch (tag_style) {
         .external => deserializer.deserializeUnion(T, allocator),
-        .internal => deserializeUnionInternal(T, allocator, deserializer),
-        .adjacent => deserializeUnionAdjacent(T, allocator, deserializer),
+        .internal => deserializeUnionInternalSchema(T, allocator, deserializer, schema),
+        .adjacent => deserializeUnionAdjacentSchema(T, allocator, deserializer, schema),
         .untagged => deserializeUnionUntagged(T, allocator, deserializer),
     };
 }
 
-fn deserializeUnionInternal(
+fn deserializeUnionInternalSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime schema: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     const info = @typeInfo(T).@"union";
-    const tag_field = comptime opts.getTagField(T);
+    const tag_field = comptime opts.getTagFieldSchema(T, schema);
 
-    // Parse as a struct map, find the tag field first.
     var map = try deserializer.deserializeStruct(T);
 
-    // Collect all key-value pairs, looking for the tag.
     var tag_name: ?[]const u8 = null;
-    // We need to buffer non-tag fields for the payload. Use a simple approach:
-    // read all keys, skip non-tag fields by tracking them.
-    // Because we can't rewind the deserializer, for internal tagging we require
-    // the tag field to appear first. Consume keys until we find it.
     while (try map.nextKey(allocator)) |key| {
         if (std.mem.eql(u8, key, tag_field)) {
             tag_name = try map.nextValue([]const u8, allocator);
             break;
         }
-        // Skip non-tag fields that appear before the tag.
         try map.skipValue();
     }
 
@@ -258,7 +266,6 @@ fn deserializeUnionInternal(
     inline for (info.fields) |field| {
         if (std.mem.eql(u8, name, field.name)) {
             if (field.type == void) {
-                // Consume remaining fields.
                 while (try map.nextKey(allocator)) |_| {
                     try map.skipValue();
                 }
@@ -269,11 +276,9 @@ fn deserializeUnionInternal(
             if (payload_info != .@"struct")
                 @compileError("Internal tagging requires struct payloads for " ++ field.name);
 
-            // Read remaining map keys as struct fields.
             var result: field.type = undefined;
             var fields_seen = std.StaticBitSet(payload_info.@"struct".fields.len).initEmpty();
 
-            // Apply defaults.
             inline for (payload_info.@"struct".fields, 0..) |sf, i| {
                 if (comptime sf.defaultValue()) |dv| {
                     @field(result, sf.name) = dv;
@@ -293,7 +298,6 @@ fn deserializeUnionInternal(
                 if (!matched) try map.skipValue();
             }
 
-            // Validate required fields.
             inline for (payload_info.@"struct".fields, 0..) |sf, i| {
                 if (!fields_seen.isSet(i)) {
                     if (@typeInfo(sf.type) == .optional) {
@@ -311,14 +315,15 @@ fn deserializeUnionInternal(
     return deserializer.raiseError(error.UnexpectedToken);
 }
 
-fn deserializeUnionAdjacent(
+fn deserializeUnionAdjacentSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime schema: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     const info = @typeInfo(T).@"union";
-    const tag_field = comptime opts.getTagField(T);
-    const content_field = comptime opts.getContentField(T);
+    const tag_field = comptime opts.getTagFieldSchema(T, schema);
+    const content_field = comptime opts.getContentFieldSchema(T, schema);
 
     var map = try deserializer.deserializeStruct(T);
 
@@ -326,13 +331,10 @@ fn deserializeUnionAdjacent(
     var found_content = false;
     var result: ?T = null;
 
-    // Adjacent tagging: {"type": "variant", "content": <payload>}
-    // Read keys in any order, handling tag and content.
     while (try map.nextKey(allocator)) |key| {
         if (std.mem.eql(u8, key, tag_field)) {
             tag_name = try map.nextValue([]const u8, allocator);
         } else if (std.mem.eql(u8, key, content_field)) {
-            // Tag must already be known to parse content.
             const name = tag_name orelse return deserializer.raiseError(error.UnexpectedToken);
             found_content = true;
             inline for (info.fields) |field| {
@@ -353,7 +355,6 @@ fn deserializeUnionAdjacent(
 
     if (result) |r| return r;
 
-    // If we got a tag but no content, check for void variants.
     if (tag_name) |name| {
         if (!found_content) {
             inline for (info.fields) |field| {
@@ -377,7 +378,6 @@ fn deserializeMap(
 
     var result: T = if (managed) T.init(allocator) else .{};
 
-    // Maps serialize as objects — reuse struct access to iterate key-value pairs.
     var map = try deserializer.deserializeStruct(T);
 
     while (try map.nextKey(allocator)) |key| {
@@ -407,9 +407,6 @@ fn deserializeUnionUntagged(
 ) @TypeOf(deserializer.*).Error!T {
     const info = @typeInfo(T).@"union";
 
-    // Try each variant in declaration order. Save deserializer state before
-    // each attempt; restore on failure. Partial allocations on failed attempts
-    // are acceptable because ArenaAllocator is the documented pattern.
     inline for (info.fields) |field| {
         const saved = deserializer.*;
         if (field.type == void) {
@@ -626,4 +623,47 @@ test "deserialize struct ignores unknown fields by default" {
     };
     const val = try deserialize(Loose, testing.allocator, &deser);
     try testing.expectEqual(@as(i32, 5), val.x);
+}
+
+// Schema-based deserialization tests.
+
+test "deserializeSchema with rename on plain struct" {
+    const Point = struct { x: i32, y: i32 };
+    const schema = .{ .rename = .{ .x = "X", .y = "Y" } };
+    var deser = MockDeserializer{
+        .map = .{
+            .keys = &.{ "X", "Y" },
+            .values = &.{ .{ .int = 10 }, .{ .int = 20 } },
+        },
+    };
+    const val = try deserializeSchema(Point, testing.allocator, &deser, schema);
+    try testing.expectEqual(@as(i32, 10), val.x);
+    try testing.expectEqual(@as(i32, 20), val.y);
+}
+
+test "deserializeSchema with deny_unknown_fields via schema" {
+    const Plain = struct { x: i32 };
+    const schema = .{ .deny_unknown_fields = true };
+    var deser = MockDeserializer{
+        .map = .{
+            .keys = &.{ "x", "extra" },
+            .values = &.{ .{ .int = 1 }, .{ .int = 2 } },
+        },
+    };
+    const result = deserializeSchema(Plain, testing.allocator, &deser, schema);
+    try testing.expectError(error.UnknownField, result);
+}
+
+test "deserializeSchema with skip via schema" {
+    const S = struct { a: i32, b: i32 = 0 };
+    const schema = .{ .skip = .{ .b = opts.SkipMode.always } };
+    var deser = MockDeserializer{
+        .map = .{
+            .keys = &.{"a"},
+            .values = &.{.{ .int = 5 }},
+        },
+    };
+    const val = try deserializeSchema(S, testing.allocator, &deser, schema);
+    try testing.expectEqual(@as(i32, 5), val.a);
+    try testing.expectEqual(@as(i32, 0), val.b);
 }

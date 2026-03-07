@@ -65,6 +65,72 @@ pub fn parseAllValues(allocator: std.mem.Allocator, input: []const u8) ![]Value 
     return parser_mod.parseAll(allocator, input);
 }
 
+// Schema-aware API.
+
+/// Serialize a value to a YAML byte slice with an external schema.
+pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
+    return toSliceWithSchema(allocator, value, .{}, schema);
+}
+
+/// Serialize with options and an external schema.
+pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opt: Options, comptime schema: anytype) ![]u8 {
+    var aw: std.io.Writer.Allocating = .init(allocator);
+    try toWriterWithSchema(&aw.writer, value, opt, schema);
+    return aw.toOwnedSlice();
+}
+
+/// Serialize a value to a writer in YAML format with an external schema.
+pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+    return toWriterWithSchema(writer, value, .{}, schema);
+}
+
+/// Serialize with options to a writer with an external schema.
+pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opt: Options, comptime schema: anytype) !void {
+    const T = @TypeOf(value);
+    if (opt.explicit_start) {
+        writer.writeAll("---\n") catch return error.WriteFailed;
+    }
+    var ser = Serializer.initWith(writer, opt);
+    try core_serialize.serializeSchema(T, value, &ser, schema);
+    writer.writeByte('\n') catch return error.WriteFailed;
+    if (opt.explicit_end) {
+        writer.writeAll("...\n") catch return error.WriteFailed;
+    }
+}
+
+/// Deserialize a value of type T from a YAML byte slice with an external schema.
+pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
+    const val = try parser_mod.parse(allocator, input);
+
+    const k = comptime kind_mod.typeKind(T);
+
+    if (k == .@"struct") {
+        if (val != .mapping) return error.WrongType;
+        var deser = Deserializer.init(&val);
+        return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    }
+
+    var deser = Deserializer.init(&val);
+    return switch (k) {
+        .bool => deser.deserializeBool(),
+        .int => deser.deserializeInt(T),
+        .float => deser.deserializeFloat(T),
+        .string => deser.deserializeString(allocator),
+        .optional => deser.deserializeOptional(kind_mod.Child(T), allocator),
+        .slice => deser.deserializeSeq(T, allocator),
+        .@"enum" => deser.deserializeEnum(T),
+        .@"union" => deser.deserializeUnion(T, allocator),
+        else => @compileError("YAML top-level type not supported: " ++ @typeName(T)),
+    };
+}
+
+/// Deserialize from a reader with an external schema.
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime schema: anytype) !T {
+    const buf = try readAll(allocator, reader);
+    defer allocator.free(buf);
+    return fromSliceSchema(T, allocator, buf, schema);
+}
+
 /// Deserialize a value of type T from a YAML byte slice.
 /// Allocates copies of all strings and slices. Use an ArenaAllocator for easy cleanup.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {

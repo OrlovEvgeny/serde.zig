@@ -417,6 +417,55 @@ const Event = struct {
 
 Built-in helpers: `serde.helpers.UnixTimestamp`, `serde.helpers.UnixTimestampMs`, `serde.helpers.Base64`.
 
+## Out-of-Band Schema
+
+Override serialization behavior externally, without modifying the type. Useful for third-party types you don't control, or when the same type needs different wire representations in different contexts.
+
+```zig
+const Point = struct { x: f64, y: f64, z: f64 };
+
+// External schema: rename fields, skip z
+const schema = .{
+    .rename = .{ .x = "X", .y = "Y" },
+    .skip = .{ .z = serde.SkipMode.always },
+};
+
+const point = Point{ .x = 1.0, .y = 2.0, .z = 3.0 };
+
+// Serialize with schema
+const bytes = try serde.json.toSliceSchema(allocator, point, schema);
+// => {"X":1.0e0,"Y":2.0e0}
+
+// Deserialize with schema
+const p = try serde.json.fromSliceSchema(Point, allocator, bytes, schema);
+// p.x == 1.0, p.y == 2.0, p.z == 0.0 (default)
+```
+
+The same type can be serialized differently with different schemas:
+
+```zig
+const full_schema = .{
+    .rename_all = serde.NamingConvention.SCREAMING_SNAKE_CASE,
+};
+
+const compact_schema = .{
+    .rename = .{ .x = "a", .y = "b" },
+    .skip = .{ .z = serde.SkipMode.always },
+};
+
+const full = try serde.json.toSliceSchema(allocator, point, full_schema);
+// => {"X":1.0e0,"Y":2.0e0,"Z":3.0e0}
+
+const compact = try serde.json.toSliceSchema(allocator, point, compact_schema);
+// => {"a":1.0e0,"b":2.0e0}
+```
+
+Schema supports all the same options as `pub const serde`: `rename`, `rename_all`, `skip`, `default`, `with`, `deny_unknown_fields`, `flatten`, `tag`, `tag_field`, `content_field`, `enum_repr`.
+
+When both an external schema and `pub const serde` exist on a type, the external schema takes priority.
+
+All `*Schema` variants are available on every format module: `toSliceSchema`, `toWriterSchema`, `fromSliceSchema`, `fromReaderSchema`, etc.
+
 ## Custom Serialization
 
 For full control, declare `zerdeSerialize` and/or `zerdeDeserialize` on your type:
