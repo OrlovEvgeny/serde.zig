@@ -12,6 +12,18 @@ pub fn serialize(
     value: T,
     serializer: anytype,
 ) @TypeOf(serializer.*).Error!void {
+    return serializeSchema(T, value, serializer, {});
+}
+
+/// Serialize any value using a format-specific serializer with an external schema.
+/// Schema fields (rename, skip, with, etc.) override T.serde declarations.
+/// Types with zerdeSerialize bypass the schema entirely.
+pub fn serializeSchema(
+    comptime T: type,
+    value: T,
+    serializer: anytype,
+    comptime schema: anytype,
+) @TypeOf(serializer.*).Error!void {
     if (comptime options.hasCustomSerializer(T)) {
         return value.zerdeSerialize(serializer);
     }
@@ -22,14 +34,14 @@ pub fn serialize(
         .float => return serializer.serializeFloat(value),
         .void => return serializer.serializeVoid(),
         .string => return serializer.serializeString(value),
-        .optional => return serializeOptional(T, value, serializer),
-        .pointer => return serialize(Child(T), value.*, serializer),
+        .optional => return serializeOptionalSchema(T, value, serializer, schema),
+        .pointer => return serializeSchema(Child(T), value.*, serializer, schema),
         .array => return serializeArray(T, value, serializer),
         .slice => return serializeSlice(T, value, serializer),
-        .@"struct" => return serializeStruct(T, value, serializer),
+        .@"struct" => return serializeStructSchema(T, value, serializer, schema),
         .tuple => return serializeTuple(T, value, serializer),
-        .@"union" => return serializeUnion(T, value, serializer),
-        .@"enum" => return serializeEnum(T, value, serializer),
+        .@"union" => return serializeUnionSchema(T, value, serializer, schema),
+        .@"enum" => return serializeEnumSchema(T, value, serializer, schema),
         .map => return serializeMap(T, value, serializer),
         .bytes => {
             if (comptime @hasDecl(@TypeOf(serializer.*), "serializeBytes")) {
@@ -41,9 +53,9 @@ pub fn serialize(
     }
 }
 
-fn serializeOptional(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeOptionalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
     if (value) |v| {
-        return serialize(Child(T), v, serializer);
+        return serializeSchema(Child(T), v, serializer, schema);
     } else {
         return serializer.serializeNull();
     }
@@ -67,16 +79,16 @@ fn serializeSlice(comptime T: type, value: T, serializer: anytype) @TypeOf(seria
     return arr.end();
 }
 
-fn serializeStruct(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeStructSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
     const info = @typeInfo(T).@"struct";
 
     var ss = try serializer.beginStruct();
 
     inline for (info.fields) |field| {
-        if (comptime options.shouldSkipField(T, field.name, .serialize)) continue;
+        if (comptime options.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
 
         // Flattened fields: inline the sub-struct's fields at the parent level.
-        if (comptime options.isFlattenedField(T, field.name)) {
+        if (comptime options.isFlattenedFieldSchema(T, field.name, schema)) {
             if (@typeInfo(field.type) != .@"struct")
                 @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
             const nested = @field(value, field.name);
@@ -88,18 +100,18 @@ fn serializeStruct(comptime T: type, value: T, serializer: anytype) @TypeOf(seri
             continue;
         }
 
-        const wire_name = comptime options.wireFieldName(T, field.name);
+        const wire_name = comptime options.wireFieldNameSchema(T, field.name, schema);
         const field_value = @field(value, field.name);
 
-        const skip_null = comptime options.isSkipIfNull(T, field.name) and @typeInfo(field.type) == .optional;
-        const skip_empty = comptime options.isSkipIfEmpty(T, field.name) and @typeInfo(field.type) == .pointer;
+        const skip_null = comptime options.isSkipIfNullSchema(T, field.name, schema) and @typeInfo(field.type) == .optional;
+        const skip_empty = comptime options.isSkipIfEmptySchema(T, field.name, schema) and @typeInfo(field.type) == .pointer;
 
         const should_skip = (skip_null and field_value == null) or
             (skip_empty and field_value.len == 0);
 
         if (!should_skip) {
-            if (comptime options.hasFieldWith(T, field.name)) {
-                const WithMod = comptime options.getFieldWith(T, field.name);
+            if (comptime options.hasFieldWithSchema(T, field.name, schema)) {
+                const WithMod = comptime options.getFieldWithSchema(T, field.name, schema);
                 try ss.serializeField(wire_name, WithMod.serialize(field_value));
             } else {
                 try ss.serializeField(wire_name, field_value);
@@ -119,14 +131,14 @@ fn serializeTuple(comptime T: type, value: T, serializer: anytype) @TypeOf(seria
     return arr.end();
 }
 
-fn serializeUnion(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
-    const tag_style = comptime options.getUnionTag(T);
+fn serializeUnionSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
+    const tag_style = comptime options.getUnionTagSchema(T, schema);
     if (tag_style == .external) {
         return serializeUnionExternal(T, value, serializer);
     } else if (tag_style == .internal) {
-        return serializeUnionInternal(T, value, serializer);
+        return serializeUnionInternalSchema(T, value, serializer, schema);
     } else if (tag_style == .adjacent) {
-        return serializeUnionAdjacent(T, value, serializer);
+        return serializeUnionAdjacentSchema(T, value, serializer, schema);
     } else {
         return serializeUnionUntagged(T, value, serializer);
     }
@@ -148,9 +160,9 @@ fn serializeUnionExternal(comptime T: type, value: T, serializer: anytype) @Type
     }
 }
 
-fn serializeUnionInternal(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeUnionInternalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
     const info = @typeInfo(T).@"union";
-    const tag_field_name = comptime options.getTagField(T);
+    const tag_field_name = comptime options.getTagFieldSchema(T, schema);
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
             var ss = try serializer.beginStruct();
@@ -171,10 +183,10 @@ fn serializeUnionInternal(comptime T: type, value: T, serializer: anytype) @Type
     }
 }
 
-fn serializeUnionAdjacent(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeUnionAdjacentSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
     const info = @typeInfo(T).@"union";
-    const tag_field_name = comptime options.getTagField(T);
-    const content_field_name = comptime options.getContentField(T);
+    const tag_field_name = comptime options.getTagFieldSchema(T, schema);
+    const content_field_name = comptime options.getContentFieldSchema(T, schema);
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
             var ss = try serializer.beginStruct();
@@ -202,8 +214,8 @@ fn serializeUnionUntagged(comptime T: type, value: T, serializer: anytype) @Type
     }
 }
 
-fn serializeEnum(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
-    if (comptime options.getEnumRepr(T) == .integer) {
+fn serializeEnumSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
+    if (comptime options.getEnumReprSchema(T, schema) == .integer) {
         const tag_type = @typeInfo(T).@"enum".tag_type;
         return serializer.serializeInt(@as(tag_type, @intFromEnum(value)));
     }
@@ -493,7 +505,6 @@ test "serialize union internal tagging" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
     try serialize(Command, .ping, &mock);
-    // Internal tagging for void: {"type":"ping"}
     try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
     try testing.expectEqual(TestEvent{ .field = "type" }, mock.events.items[1]);
     try testing.expectEqualStrings("ping", mock.events.items[2].string_val);
@@ -509,4 +520,49 @@ test "serialize tagged union with payload" {
     try testing.expectEqual(TestEvent{ .field = "set" }, mock.events.items[1]);
     try testing.expectEqual(TestEvent{ .int_val = 42 }, mock.events.items[2]);
     try testing.expectEqual(TestEvent.struct_end, mock.events.items[3]);
+}
+
+// Schema-based serialization tests.
+
+test "serializeSchema with rename on plain struct" {
+    const Point = struct { x: i32, y: i32 };
+    var mock = MockSerializer.init(testing.allocator);
+    defer mock.deinit();
+    const schema = .{ .rename = .{ .x = "X", .y = "Y" } };
+    try serializeSchema(Point, .{ .x = 1, .y = 2 }, &mock, schema);
+    try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
+    try testing.expectEqualStrings("X", mock.events.items[1].field);
+    try testing.expectEqual(TestEvent{ .int_val = 1 }, mock.events.items[2]);
+    try testing.expectEqualStrings("Y", mock.events.items[3].field);
+    try testing.expectEqual(TestEvent{ .int_val = 2 }, mock.events.items[4]);
+    try testing.expectEqual(TestEvent.struct_end, mock.events.items[5]);
+}
+
+test "serializeSchema with skip on plain struct" {
+    const Point = struct { x: i32, y: i32, z: i32 };
+    var mock = MockSerializer.init(testing.allocator);
+    defer mock.deinit();
+    const schema = .{ .skip = .{ .z = options.SkipMode.always } };
+    try serializeSchema(Point, .{ .x = 1, .y = 2, .z = 3 }, &mock, schema);
+    // Should only have x and y fields.
+    try testing.expectEqual(@as(usize, 6), mock.events.items.len);
+    try testing.expectEqualStrings("x", mock.events.items[1].field);
+    try testing.expectEqualStrings("y", mock.events.items[3].field);
+}
+
+test "serializeSchema overrides T.serde" {
+    const User = struct {
+        id: u64,
+        first_name: []const u8,
+
+        pub const serde = .{
+            .rename = .{ .id = "user_id" },
+        };
+    };
+    var mock = MockSerializer.init(testing.allocator);
+    defer mock.deinit();
+    // Schema overrides the rename.
+    const schema = .{ .rename = .{ .id = "ID" } };
+    try serializeSchema(User, .{ .id = 1, .first_name = "Bob" }, &mock, schema);
+    try testing.expectEqualStrings("ID", mock.events.items[1].field);
 }

@@ -7,7 +7,9 @@ pub const yaml = @import("formats/yaml/mod.zig");
 pub const zon = @import("formats/zon/mod.zig");
 
 pub const serialize = core.serialize;
+pub const serializeSchema = core.serializeSchema;
 pub const deserialize = core.deserialize;
+pub const deserializeSchema = core.deserializeSchema;
 
 pub const Kind = core.Kind;
 pub const typeKind = core.typeKind;

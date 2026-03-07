@@ -64,6 +64,108 @@ pub fn toWriterWith(writer: *std.io.Writer, value: anytype, dialect: Dialect) !v
     }
 }
 
+// Schema-aware API.
+
+/// Serialize a slice of structs to CSV with an external schema.
+pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
+    return toSliceWithSchema(allocator, value, .{}, schema);
+}
+
+/// Serialize a slice of structs to CSV with a specific dialect and an external schema.
+pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, dialect: Dialect, comptime schema: anytype) ![]u8 {
+    var aw: std.io.Writer.Allocating = .init(allocator);
+    try toWriterWithSchema(&aw.writer, value, dialect, schema);
+    return aw.toOwnedSlice();
+}
+
+/// Serialize a slice of structs to a writer with an external schema.
+pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+    return toWriterWithSchema(writer, value, .{}, schema);
+}
+
+/// Serialize a slice of structs to a writer with a specific dialect and an external schema.
+pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, dialect: Dialect, comptime schema: anytype) !void {
+    const T = @TypeOf(value);
+    const ElemType = comptime getStructElem(T);
+
+    var ser = Serializer.init(writer, dialect);
+
+    if (dialect.has_header) {
+        try writeHeaderRowSchema(ElemType, &ser, schema);
+    }
+
+    for (value) |elem| {
+        try core_serialize.serializeSchema(ElemType, elem, &ser, schema);
+        try ser.endRow();
+    }
+}
+
+/// Deserialize CSV into a slice of structs with an external schema.
+pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
+    return fromSliceWithSchema(T, allocator, input, .{}, schema);
+}
+
+/// Deserialize CSV with a specific dialect and an external schema.
+pub fn fromSliceWithSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, dialect: Dialect, comptime schema: anytype) !T {
+    const ElemType = comptime getStructElem(T);
+
+    var scanner = Scanner.init(input, dialect);
+
+    var header_fields: []const []const u8 = &.{};
+    if (dialect.has_header) {
+        const row = (try scanner.readRow(allocator)) orelse return allocator.alloc(ElemType, 0) catch return error.OutOfMemory;
+        defer allocator.free(row);
+        var hdrs: std.ArrayList([]const u8) = .empty;
+        errdefer {
+            for (hdrs.items) |h| allocator.free(h);
+            hdrs.deinit(allocator);
+        }
+        for (row) |field| {
+            const name = if (field.quoted)
+                try scanner_mod.unquoteField(allocator, field.raw, dialect.quote)
+            else
+                allocator.dupe(u8, field.raw) catch return error.OutOfMemory;
+            hdrs.append(allocator, name) catch return error.OutOfMemory;
+        }
+        header_fields = hdrs.toOwnedSlice(allocator) catch return error.OutOfMemory;
+    }
+    defer {
+        for (header_fields) |h| allocator.free(h);
+        allocator.free(header_fields);
+    }
+
+    var items: std.ArrayList(ElemType) = .empty;
+    errdefer items.deinit(allocator);
+
+    while (try scanner.readRow(allocator)) |row| {
+        defer allocator.free(row);
+        if (row.len == 0) continue;
+
+        var deser = Deserializer.init(header_fields, row);
+        const elem = try core_deserialize.deserializeSchema(ElemType, allocator, &deser, schema);
+        items.append(allocator, elem) catch return error.OutOfMemory;
+    }
+
+    return items.toOwnedSlice(allocator) catch return error.OutOfMemory;
+}
+
+/// Deserialize CSV from a reader with an external schema.
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime schema: anytype) !T {
+    const buf = try readAll(allocator, reader);
+    defer allocator.free(buf);
+    return fromSliceSchema(T, allocator, buf, schema);
+}
+
+fn writeHeaderRowSchema(comptime T: type, ser: *Serializer, comptime schema: anytype) SerializeError!void {
+    const info = @typeInfo(T).@"struct";
+    inline for (info.fields) |field| {
+        if (comptime options.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
+        const wire_name = comptime options.wireFieldNameSchema(T, field.name, schema);
+        try ser.serializeString(wire_name);
+    }
+    try ser.endRow();
+}
+
 /// Deserialize CSV into a slice of structs with the default dialect.
 /// Allocates all output. Use an ArenaAllocator for easy cleanup.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {

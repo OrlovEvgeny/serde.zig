@@ -30,6 +30,35 @@ pub fn toWriter(allocator: std.mem.Allocator, writer: *std.io.Writer, value: any
     try core_serialize.serialize(@TypeOf(value), value, &ser);
 }
 
+// Schema-aware API.
+
+/// Serialize a value to a MessagePack byte slice with an external schema.
+pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
+    var aw: std.io.Writer.Allocating = .init(allocator);
+    var ser = Serializer.init(&aw.writer, allocator);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+    return aw.toOwnedSlice();
+}
+
+/// Serialize a value to a writer in MessagePack format with an external schema.
+pub fn toWriterSchema(allocator: std.mem.Allocator, writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+    var ser = Serializer.init(writer, allocator);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+}
+
+/// Deserialize a value of type T from a MessagePack byte slice with an external schema.
+pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
+    var deser = Deserializer.init(input);
+    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+}
+
+/// Deserialize from a reader with an external schema.
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime schema: anytype) !T {
+    const buf = try readAll(allocator, reader);
+    defer allocator.free(buf);
+    return fromSliceSchema(T, allocator, buf, schema);
+}
+
 /// Deserialize a value of type T from a MessagePack byte slice.
 /// Allocates copies of all strings and slices. Use an ArenaAllocator for easy cleanup.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {

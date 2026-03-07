@@ -46,6 +46,51 @@ pub fn toSliceAllocWith(allocator: std.mem.Allocator, value: anytype, opts: Opti
     return result;
 }
 
+// Schema-aware API: external schema overrides T.serde declarations.
+
+/// Serialize a value to a JSON byte slice with an external schema.
+pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
+    return toSliceWithSchema(allocator, value, .{}, schema);
+}
+
+/// Serialize with explicit options and an external schema.
+pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opts: Options, comptime schema: anytype) ![]u8 {
+    var aw: std.io.Writer.Allocating = .init(allocator);
+    var ser = Serializer.init(&aw.writer, opts);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+    return aw.toOwnedSlice();
+}
+
+/// Serialize a value to a writer in JSON format with an external schema.
+pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+    return toWriterWithSchema(writer, value, .{}, schema);
+}
+
+/// Serialize with explicit options to a writer with an external schema.
+pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opts: Options, comptime schema: anytype) !void {
+    var ser = Serializer.init(writer, opts);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+}
+
+/// Deserialize a value of type T from a JSON byte slice with an external schema.
+pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
+    var deser = Deserializer.init(input);
+    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+}
+
+/// Deserialize with zero-copy string borrowing and an external schema.
+pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
+    var deser = Deserializer.initBorrowed(input);
+    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+}
+
+/// Deserialize from a reader with an external schema.
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime schema: anytype) !T {
+    const buf = try readAll(allocator, reader);
+    defer allocator.free(buf);
+    return fromSliceSchema(T, allocator, buf, schema);
+}
+
 pub const PrettyOptions = struct { indent: u8 = 2 };
 
 /// Serialize a value as pretty-printed JSON to a writer.
@@ -982,4 +1027,167 @@ test "struct with combined serde options" {
     try testing.expectEqualStrings("test", val.display_name);
     try testing.expectEqual(@as(i32, 3), val.retry_count);
     try testing.expectEqual(@as(?[]const u8, null), val.opt_note);
+}
+
+// Schema-aware roundtrip tests.
+
+test "schema: rename on plain struct" {
+    const Point = struct { x: f64, y: f64, z: f64 };
+    const schema = .{
+        .rename = .{ .x = "X", .y = "Y" },
+    };
+
+    const bytes = try toSliceSchema(testing.allocator, Point{ .x = 1.0, .y = 2.0, .z = 3.0 }, schema);
+    defer testing.allocator.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"X\"") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"Y\"") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"z\"") != null);
+
+    const val = try fromSliceSchema(Point, testing.allocator, bytes, schema);
+    try testing.expectEqual(@as(f64, 1.0), val.x);
+    try testing.expectEqual(@as(f64, 2.0), val.y);
+    try testing.expectEqual(@as(f64, 3.0), val.z);
+}
+
+test "schema: skip on plain struct" {
+    const Point = struct { x: f64, y: f64, z: f64 };
+    const serde_opts = @import("../../core/options.zig");
+    const schema = .{
+        .skip = .{ .z = serde_opts.SkipMode.always },
+    };
+
+    const bytes = try toSliceSchema(testing.allocator, Point{ .x = 1.0, .y = 2.0, .z = 3.0 }, schema);
+    defer testing.allocator.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"z\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"x\"") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"y\"") != null);
+}
+
+test "schema: deny_unknown_fields" {
+    const Plain = struct { x: i32 };
+    const schema = .{ .deny_unknown_fields = true };
+
+    // Known field only — succeeds.
+    const val = try fromSliceSchema(Plain, testing.allocator, "{\"x\":10}", schema);
+    try testing.expectEqual(@as(i32, 10), val.x);
+
+    // Extra field — fails.
+    const result = fromSliceSchema(Plain, testing.allocator, "{\"x\":10,\"y\":20}", schema);
+    try testing.expectError(error.UnknownField, result);
+}
+
+test "schema: overrides T.serde rename" {
+    const User = struct {
+        id: u64,
+        name: []const u8,
+
+        pub const serde = .{
+            .rename = .{ .id = "user_id" },
+        };
+    };
+    // Schema overrides rename: use "ID" instead of "user_id".
+    const schema = .{ .rename = .{ .id = "ID" } };
+
+    const bytes = try toSliceSchema(testing.allocator, User{ .id = 42, .name = "Alice" }, schema);
+    defer testing.allocator.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"ID\"") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"user_id\"") == null);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const val = try fromSliceSchema(User, arena.allocator(), bytes, schema);
+    try testing.expectEqual(@as(u64, 42), val.id);
+    try testing.expectEqualStrings("Alice", val.name);
+}
+
+test "schema: same type two different schemas" {
+    const Point = struct { x: f64, y: f64, z: f64 };
+
+    // Schema A: rename x/y, skip z.
+    const serde_opts = @import("../../core/options.zig");
+    const schema_a = .{
+        .rename = .{ .x = "X", .y = "Y" },
+        .skip = .{ .z = serde_opts.SkipMode.always },
+    };
+    const bytes_a = try toSliceSchema(testing.allocator, Point{ .x = 1, .y = 2, .z = 3 }, schema_a);
+    defer testing.allocator.free(bytes_a);
+    try testing.expect(std.mem.indexOf(u8, bytes_a, "\"z\"") == null);
+    try testing.expect(std.mem.indexOf(u8, bytes_a, "\"X\"") != null);
+
+    // No schema: all fields with original names.
+    const bytes_b = try toSlice(testing.allocator, Point{ .x = 1, .y = 2, .z = 3 });
+    defer testing.allocator.free(bytes_b);
+    try testing.expect(std.mem.indexOf(u8, bytes_b, "\"z\"") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes_b, "\"x\"") != null);
+}
+
+test "schema: rename_all" {
+    const Config = struct { max_retries: u32, base_url: []const u8 };
+    const serde_opts = @import("../../core/options.zig");
+    const schema = .{ .rename_all = serde_opts.NamingConvention.camel_case };
+
+    const bytes = try toSliceSchema(testing.allocator, Config{ .max_retries = 3, .base_url = "http://x" }, schema);
+    defer testing.allocator.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"maxRetries\"") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"baseUrl\"") != null);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const val = try fromSliceSchema(Config, arena.allocator(), bytes, schema);
+    try testing.expectEqual(@as(u32, 3), val.max_retries);
+    try testing.expectEqualStrings("http://x", val.base_url);
+}
+
+test "schema: with module" {
+    const ts = @import("../../helpers/timestamp.zig");
+    const Event = struct {
+        name: []const u8,
+        created_at: i64,
+    };
+    // Apply UnixTimestampMs via schema on a plain type.
+    const schema = .{
+        .with = .{ .created_at = ts.UnixTimestampMs },
+    };
+
+    const event: Event = .{ .name = "deploy", .created_at = 1700000 };
+    const bytes = try toSliceSchema(testing.allocator, event, schema);
+    defer testing.allocator.free(bytes);
+    try testing.expect(std.mem.indexOf(u8, bytes, "1700000000") != null);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const val = try fromSliceSchema(Event, arena.allocator(), bytes, schema);
+    try testing.expectEqualStrings("deploy", val.name);
+    try testing.expectEqual(@as(i64, 1700000), val.created_at);
+}
+
+test "schema: zerdeSerialize bypasses schema" {
+    const Custom = struct {
+        inner: u64,
+
+        pub fn zerdeSerialize(self: @This(), serializer: anytype) !void {
+            var buf: [20]u8 = undefined;
+            const s = std.fmt.bufPrint(&buf, "{d}", .{self.inner}) catch unreachable;
+            try serializer.serializeString(s);
+        }
+
+        pub fn zerdeDeserialize(comptime _: type, allocator: std.mem.Allocator, deserializer: anytype) @TypeOf(deserializer.*).Error!@This() {
+            const str = try deserializer.deserializeString(allocator);
+            defer allocator.free(str);
+            return .{ .inner = std.fmt.parseInt(u64, str, 10) catch return error.InvalidNumber };
+        }
+    };
+
+    // Schema has a rename that should be ignored because custom code takes over.
+    const schema = .{ .rename = .{ .inner = "INNER" } };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const original = Custom{ .inner = 12345 };
+    const bytes = try toSliceSchema(testing.allocator, original, schema);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("\"12345\"", bytes);
+
+    const result = try fromSliceSchema(Custom, arena.allocator(), bytes, schema);
+    try testing.expectEqual(@as(u64, 12345), result.inner);
 }
