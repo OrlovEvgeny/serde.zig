@@ -3,6 +3,7 @@ pub const json = @import("formats/json/mod.zig");
 pub const msgpack = @import("formats/msgpack/mod.zig");
 pub const toml = @import("formats/toml/mod.zig");
 pub const csv = @import("formats/csv/mod.zig");
+pub const xml = @import("formats/xml/mod.zig");
 pub const yaml = @import("formats/yaml/mod.zig");
 pub const zon = @import("formats/zon/mod.zig");
 
@@ -55,6 +56,11 @@ test {
     _ = @import("formats/csv/scanner.zig");
     _ = @import("formats/csv/serializer.zig");
     _ = @import("formats/csv/deserializer.zig");
+    _ = xml;
+    _ = @import("formats/xml/writer.zig");
+    _ = @import("formats/xml/scanner.zig");
+    _ = @import("formats/xml/serializer.zig");
+    _ = @import("formats/xml/deserializer.zig");
     _ = yaml;
     _ = @import("formats/yaml/scanner.zig");
     _ = @import("formats/yaml/parser.zig");
