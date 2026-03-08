@@ -57,6 +57,18 @@ fn yamlScalarRoundtrip(comptime T: type, allocator: std.mem.Allocator, value: T)
     return result.v;
 }
 
+fn xmlRoundtrip(comptime T: type, allocator: std.mem.Allocator, value: T) !T {
+    const bytes = try serde.xml.toSlice(allocator, value);
+    return serde.xml.fromSlice(T, allocator, bytes);
+}
+
+fn xmlScalarRoundtrip(comptime T: type, allocator: std.mem.Allocator, value: T) !T {
+    const W = Wrap(T);
+    const bytes = try serde.xml.toSlice(allocator, W{ .v = value });
+    const result = try serde.xml.fromSlice(W, allocator, bytes);
+    return result.v;
+}
+
 // Bool.
 
 test "cross-format roundtrip: bool" {
@@ -69,6 +81,7 @@ test "cross-format roundtrip: bool" {
         try testing.expectEqual(v, try zonRoundtrip(bool, testing.allocator, v));
         try testing.expectEqual(v, try tomlScalarRoundtrip(bool, a, v));
         try testing.expectEqual(v, try yamlScalarRoundtrip(bool, a, v));
+        try testing.expectEqual(v, try xmlScalarRoundtrip(bool, a, v));
     }
 }
 
@@ -84,6 +97,7 @@ test "cross-format roundtrip: i32" {
         try testing.expectEqual(v, try zonRoundtrip(i32, testing.allocator, v));
         try testing.expectEqual(v, try tomlScalarRoundtrip(i32, a, v));
         try testing.expectEqual(v, try yamlScalarRoundtrip(i32, a, v));
+        try testing.expectEqual(v, try xmlScalarRoundtrip(i32, a, v));
     }
 }
 
@@ -97,6 +111,7 @@ test "cross-format roundtrip: i64" {
         try testing.expectEqual(v, try zonRoundtrip(i64, testing.allocator, v));
         try testing.expectEqual(v, try tomlScalarRoundtrip(i64, a, v));
         try testing.expectEqual(v, try yamlScalarRoundtrip(i64, a, v));
+        try testing.expectEqual(v, try xmlScalarRoundtrip(i64, a, v));
     }
 }
 
@@ -115,6 +130,10 @@ test "cross-format roundtrip: f64" {
         const r = try yamlScalarRoundtrip(f64, a, v);
         try testing.expect(@abs(r - v) < 0.001);
     }
+    {
+        const r = try xmlScalarRoundtrip(f64, a, v);
+        try testing.expect(@abs(r - v) < 0.001);
+    }
 }
 
 // String.
@@ -129,6 +148,7 @@ test "cross-format roundtrip: string" {
     try testing.expectEqualStrings(v, try zonRoundtrip([]const u8, a, v));
     try testing.expectEqualStrings(v, try tomlScalarRoundtrip([]const u8, a, v));
     try testing.expectEqualStrings(v, try yamlScalarRoundtrip([]const u8, a, v));
+    try testing.expectEqualStrings(v, try xmlScalarRoundtrip([]const u8, a, v));
 }
 
 // Struct.
@@ -143,6 +163,7 @@ test "cross-format roundtrip: Point struct" {
     try testing.expectEqualDeep(v, try zonRoundtrip(Point, testing.allocator, v));
     try testing.expectEqualDeep(v, try tomlRoundtrip(Point, a, v));
     try testing.expectEqualDeep(v, try yamlRoundtrip(Point, a, v));
+    try testing.expectEqualDeep(v, try xmlRoundtrip(Point, a, v));
 }
 
 // Nested struct.
@@ -177,6 +198,11 @@ test "cross-format roundtrip: nested struct" {
         try testing.expectEqualStrings("test", r.name);
         try testing.expectEqual(@as(i32, 1), r.inner.x);
     }
+    {
+        const r = try xmlRoundtrip(Nested, a, v);
+        try testing.expectEqualStrings("test", r.name);
+        try testing.expectEqual(@as(i32, 1), r.inner.x);
+    }
 }
 
 // Optional present.
@@ -191,6 +217,7 @@ test "cross-format roundtrip: optional present" {
     try testing.expectEqual(v, try zonRoundtrip(?i32, testing.allocator, v));
     try testing.expectEqual(v, try tomlScalarRoundtrip(?i32, a, v));
     try testing.expectEqual(v, try yamlScalarRoundtrip(?i32, a, v));
+    try testing.expectEqual(v, try xmlScalarRoundtrip(?i32, a, v));
 }
 
 // Optional null.
@@ -205,6 +232,7 @@ test "cross-format roundtrip: optional null" {
     try testing.expectEqual(v, try zonRoundtrip(?i32, testing.allocator, v));
     try testing.expectEqual(v, try tomlScalarRoundtrip(?i32, a, v));
     try testing.expectEqual(v, try yamlScalarRoundtrip(?i32, a, v));
+    try testing.expectEqual(v, try xmlScalarRoundtrip(?i32, a, v));
 }
 
 // Slice.
@@ -237,6 +265,7 @@ test "cross-format roundtrip: enum" {
     try testing.expectEqual(Color.green, try zonRoundtrip(Color, testing.allocator, Color.green));
     try testing.expectEqual(Color.green, try tomlScalarRoundtrip(Color, a, Color.green));
     try testing.expectEqual(Color.green, try yamlScalarRoundtrip(Color, a, Color.green));
+    try testing.expectEqual(Color.green, try xmlScalarRoundtrip(Color, a, Color.green));
 }
 
 // Union void variant (ZON excluded — no union deserialization support).

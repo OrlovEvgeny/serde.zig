@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) void {
         "test/fuzz_toml.zig",
         "test/fuzz_zon.zig",
         "test/fuzz_csv.zig",
+        "test/fuzz_xml.zig",
         "test/fuzz_yaml.zig",
     };
 

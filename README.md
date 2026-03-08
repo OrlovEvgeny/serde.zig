@@ -6,7 +6,7 @@
 
 Serialization framework for Zig
 
-Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zig type across JSON, MessagePack, TOML, YAML, ZON, and CSV without macros, code generation, or runtime type information.
+Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zig type across JSON, MessagePack, TOML, YAML, XML, ZON, and CSV without macros, code generation, or runtime type information.
 
 ```zig
 const serde = @import("serde");
@@ -63,6 +63,7 @@ Requires Zig 0.15.0 or later.
 | MessagePack | `serde.msgpack` | + | + |
 | TOML | `serde.toml` | + | + |
 | YAML | `serde.yaml` | + | + |
+| XML | `serde.xml` | + | + |
 | ZON | `serde.zon` | + | + |
 | CSV | `serde.csv` | + | + |
 
@@ -121,6 +122,7 @@ const person = Person{
 const json = try serde.json.toSlice(allocator, person);
 const msgpack = try serde.msgpack.toSlice(allocator, person);
 const yaml = try serde.yaml.toSlice(allocator, person);
+const xml = try serde.xml.toSlice(allocator, person);
 ```
 
 ### Arena allocator (recommended for deserialization)
@@ -256,6 +258,33 @@ const yaml_bytes = try serde.yaml.toSlice(allocator, server);
 // port: 8080
 // debug: true
 ```
+
+### XML
+
+```zig
+const User = struct {
+    id: u64,
+    name: []const u8,
+    role: []const u8,
+
+    pub const serde = .{
+        .xml_attribute = .{.id},
+        .xml_root = "user",
+    };
+};
+
+const xml_bytes = try serde.xml.toSlice(allocator, User{
+    .id = 42,
+    .name = "Alice",
+    .role = "admin",
+});
+// <?xml version="1.0" encoding="UTF-8"?>
+// <user id="42"><name>Alice</name><role>admin</role></user>
+
+const user = try serde.xml.fromSlice(User, arena.allocator(), xml_bytes);
+```
+
+Fields listed in `xml_attribute` are serialized as XML attributes on the root element. All other fields become child elements.
 
 ### ZON
 
