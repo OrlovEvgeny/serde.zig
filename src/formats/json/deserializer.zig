@@ -108,7 +108,7 @@ pub const Deserializer = struct {
             _ = try self.scanner.next();
             return null;
         }
-        return try core_deserialize.deserialize(T, allocator, self);
+        return try core_deserialize.deserialize(T, allocator, self, .{});
     }
 
     pub fn deserializeEnum(self: *Deserializer, comptime T: type) Error!T {
@@ -154,7 +154,7 @@ pub const Deserializer = struct {
                     if (close != .object_end) return error.UnexpectedToken;
                     return @unionInit(T, field.name, {});
                 } else {
-                    const payload = try core_deserialize.deserialize(field.type, allocator, self);
+                    const payload = try core_deserialize.deserialize(field.type, allocator, self, .{});
                     const close = try self.scanner.next();
                     if (close != .object_end) return error.UnexpectedToken;
                     return @unionInit(T, field.name, payload);
@@ -188,7 +188,7 @@ pub const Deserializer = struct {
                 _ = try self.scanner.next();
                 break;
             }
-            const elem = try core_deserialize.deserialize(Child, allocator, self);
+            const elem = try core_deserialize.deserialize(Child, allocator, self, .{});
             items.append(allocator, elem) catch return error.OutOfMemory;
         }
 
@@ -227,7 +227,7 @@ pub const MapAccess = struct {
 
     pub fn nextValue(self: *MapAccess, comptime T: type, allocator: Allocator) Error!T {
         var deser = Deserializer{ .scanner = self.scanner.*, .borrow_strings = self.borrow_strings };
-        const result = try core_deserialize.deserialize(T, allocator, &deser);
+        const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
         self.scanner.* = deser.scanner;
         return result;
     }
@@ -253,7 +253,7 @@ pub const SeqAccess = struct {
             return null;
         }
         var deser = Deserializer{ .scanner = self.scanner.* };
-        const result = try core_deserialize.deserialize(T, allocator, &deser);
+        const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
         self.scanner.* = deser.scanner;
         return result;
     }
@@ -278,14 +278,14 @@ fn unescapeString(allocator: Allocator, raw: []const u8) DeserializeError![]cons
             i += 1;
             if (i >= raw.len) return error.UnexpectedEof;
             switch (raw[i]) {
-                '"' => try appendByte(&out, allocator,'"'),
-                '\\' => try appendByte(&out, allocator,'\\'),
-                '/' => try appendByte(&out, allocator,'/'),
-                'n' => try appendByte(&out, allocator,'\n'),
-                'r' => try appendByte(&out, allocator,'\r'),
-                't' => try appendByte(&out, allocator,'\t'),
-                'b' => try appendByte(&out, allocator,0x08),
-                'f' => try appendByte(&out, allocator,0x0c),
+                '"' => try appendByte(&out, allocator, '"'),
+                '\\' => try appendByte(&out, allocator, '\\'),
+                '/' => try appendByte(&out, allocator, '/'),
+                'n' => try appendByte(&out, allocator, '\n'),
+                'r' => try appendByte(&out, allocator, '\r'),
+                't' => try appendByte(&out, allocator, '\t'),
+                'b' => try appendByte(&out, allocator, 0x08),
+                'f' => try appendByte(&out, allocator, 0x0c),
                 'u' => {
                     i += 1;
                     if (i + 4 > raw.len) return error.UnexpectedEof;
@@ -315,7 +315,7 @@ fn unescapeString(allocator: Allocator, raw: []const u8) DeserializeError![]cons
             }
             i += 1;
         } else {
-            try appendByte(&out, allocator,raw[i]);
+            try appendByte(&out, allocator, raw[i]);
             i += 1;
         }
     }
@@ -406,7 +406,7 @@ test "deserialize enum" {
 test "deserialize struct" {
     const Point = struct { x: i32, y: i32 };
     var d = Deserializer.init("{\"x\":10,\"y\":20}");
-    const point = try core_deserialize.deserialize(Point, testing.allocator, &d);
+    const point = try core_deserialize.deserialize(Point, testing.allocator, &d, .{});
     try testing.expectEqual(@as(i32, 10), point.x);
     try testing.expectEqual(@as(i32, 20), point.y);
 }
@@ -414,7 +414,7 @@ test "deserialize struct" {
 test "deserialize struct with optional" {
     const Opt = struct { a: i32, b: ?i32 };
     var d = Deserializer.init("{\"a\":5}");
-    const val = try core_deserialize.deserialize(Opt, testing.allocator, &d);
+    const val = try core_deserialize.deserialize(Opt, testing.allocator, &d, .{});
     try testing.expectEqual(@as(i32, 5), val.a);
     try testing.expectEqual(@as(?i32, null), val.b);
 }

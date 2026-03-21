@@ -13,8 +13,10 @@ pub const MapValueType = kind.MapValueType;
 pub const isMapManaged = kind.isMapManaged;
 
 pub const serialize = serialize_mod.serialize;
+pub const serializeWith = serialize_mod.serializeWith;
 pub const serializeSchema = serialize_mod.serializeSchema;
 pub const deserialize = deserialize_mod.deserialize;
+pub const deserializeWith = deserialize_mod.deserializeWith;
 pub const deserializeSchema = deserialize_mod.deserializeSchema;
 
 pub const isSerializer = interface.isSerializer;

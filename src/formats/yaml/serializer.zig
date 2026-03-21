@@ -150,7 +150,7 @@ pub const StructSerializer = struct {
                 .is_map_value = true,
                 .opts = self.opts,
             };
-            core_serialize.serialize(@TypeOf(value), value, &child) catch return error.WriteFailed;
+            core_serialize.serialize(@TypeOf(value), value, &child, .{}) catch return error.WriteFailed;
             return;
         }
 
@@ -163,7 +163,7 @@ pub const StructSerializer = struct {
                 .is_map_value = false,
                 .opts = self.opts,
             };
-            core_serialize.serialize(@TypeOf(value), value, &child) catch return error.WriteFailed;
+            core_serialize.serialize(@TypeOf(value), value, &child, .{}) catch return error.WriteFailed;
             return;
         }
 
@@ -175,7 +175,7 @@ pub const StructSerializer = struct {
             .is_map_value = false,
             .opts = self.opts,
         };
-        core_serialize.serialize(@TypeOf(value), value, &child) catch return error.WriteFailed;
+        core_serialize.serialize(@TypeOf(value), value, &child, .{}) catch return error.WriteFailed;
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
@@ -396,7 +396,7 @@ const testing = std.testing;
 fn serializeToString(value: anytype) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 

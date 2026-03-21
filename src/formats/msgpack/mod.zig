@@ -11,7 +11,7 @@ pub const Deserializer = deserializer_mod.Deserializer;
 pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(allocator);
     var ser = Serializer.init(&aw.writer, allocator);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 
@@ -27,7 +27,7 @@ pub fn toSliceAlloc(allocator: std.mem.Allocator, value: anytype) ![:0]u8 {
 /// Serialize a value to a writer in MessagePack format.
 pub fn toWriter(allocator: std.mem.Allocator, writer: *std.io.Writer, value: anytype) !void {
     var ser = Serializer.init(writer, allocator);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
 }
 
 // Schema-aware API.
@@ -36,20 +36,20 @@ pub fn toWriter(allocator: std.mem.Allocator, writer: *std.io.Writer, value: any
 pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(allocator);
     var ser = Serializer.init(&aw.writer, allocator);
-    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in MessagePack format with an external schema.
 pub fn toWriterSchema(allocator: std.mem.Allocator, writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
     var ser = Serializer.init(writer, allocator);
-    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
 }
 
 /// Deserialize a value of type T from a MessagePack byte slice with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.init(input);
-    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
     if (deser.pos != deser.input.len) return error.TrailingData;
     return result;
 }
@@ -65,7 +65,7 @@ pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: 
 /// Allocates copies of all strings and slices. Use an ArenaAllocator for easy cleanup.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.init(input);
-    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
     if (deser.pos != deser.input.len) return error.TrailingData;
     return result;
 }
@@ -690,7 +690,7 @@ test "serialize skip if null" {
         email: ?[]const u8,
 
         pub const serde = .{
-            .skip = .{ .email = serde_opts.SkipMode.@"null" },
+            .skip = .{ .email = serde_opts.SkipMode.null },
         };
     };
 
@@ -746,7 +746,7 @@ test "struct with combined serde options" {
             .rename_all = serde_opts.NamingConvention.camel_case,
             .skip = .{
                 .secret_key = serde_opts.SkipMode.always,
-                .opt_note = serde_opts.SkipMode.@"null",
+                .opt_note = serde_opts.SkipMode.null,
             },
         };
     };
@@ -778,7 +778,7 @@ test "roundtrip i128 within i64 range" {
 }
 
 test "deserialize error: truncated input" {
-    const result = fromSlice(i32, testing.allocator, &.{0xce, 0x12});
+    const result = fromSlice(i32, testing.allocator, &.{ 0xce, 0x12 });
     try testing.expectError(error.UnexpectedEof, result);
 }
 

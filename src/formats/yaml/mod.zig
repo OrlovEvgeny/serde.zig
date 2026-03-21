@@ -47,7 +47,7 @@ pub fn toWriterWithOptions(writer: *std.io.Writer, value: anytype, opts: Options
         writer.writeAll("---\n") catch return error.WriteFailed;
     }
     var ser = Serializer.initWith(writer, opts);
-    try core_serialize.serialize(T, value, &ser);
+    try core_serialize.serialize(T, value, &ser, .{});
     writer.writeByte('\n') catch return error.WriteFailed;
     if (opts.explicit_end) {
         writer.writeAll("...\n") catch return error.WriteFailed;
@@ -91,7 +91,7 @@ pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opt: Options, 
         writer.writeAll("---\n") catch return error.WriteFailed;
     }
     var ser = Serializer.initWith(writer, opt);
-    try core_serialize.serializeSchema(T, value, &ser, schema);
+    try core_serialize.serializeSchema(T, value, &ser, schema, .{});
     writer.writeByte('\n') catch return error.WriteFailed;
     if (opt.explicit_end) {
         writer.writeAll("...\n") catch return error.WriteFailed;
@@ -107,7 +107,7 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
     if (k == .@"struct") {
         if (val != .mapping) return error.WrongType;
         var deser = Deserializer.init(&val);
-        return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+        return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
     }
 
     var deser = Deserializer.init(&val);
@@ -142,7 +142,7 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
     if (k == .@"struct") {
         if (val != .mapping) return error.WrongType;
         var deser = Deserializer.init(&val);
-        return core_deserialize.deserialize(T, allocator, &deser);
+        return core_deserialize.deserialize(T, allocator, &deser, .{});
     }
 
     // Other types: wrap in ValueDeserializer.
@@ -710,7 +710,7 @@ test "serialize skip if null" {
         email: ?[]const u8,
 
         pub const serde = .{
-            .skip = .{ .email = options.SkipMode.@"null" },
+            .skip = .{ .email = options.SkipMode.null },
         };
     };
 

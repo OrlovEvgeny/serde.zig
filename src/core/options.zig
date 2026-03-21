@@ -6,7 +6,7 @@ pub const convertCase = rename_mod.convertCase;
 
 pub const SkipMode = enum {
     always,
-    @"null",
+    null,
     empty,
 };
 
@@ -102,7 +102,7 @@ pub fn isSkipIfNullSchema(comptime T: type, comptime field_name: []const u8, com
         if (@hasField(S, "skip")) {
             const skip = schema.skip;
             if (@hasField(@TypeOf(skip), field_name))
-                return @field(skip, field_name) == .@"null";
+                return @field(skip, field_name) == .null;
         }
     }
     if (!hasSerdeOptions(T)) return false;
@@ -110,7 +110,7 @@ pub fn isSkipIfNullSchema(comptime T: type, comptime field_name: []const u8, com
     if (!hasFieldOrDecl(@TypeOf(opts), "skip")) return false;
     const skip = opts.skip;
     if (!@hasField(@TypeOf(skip), field_name)) return false;
-    return @field(skip, field_name) == .@"null";
+    return @field(skip, field_name) == .null;
 }
 
 /// Whether a field should be skipped when empty.
@@ -426,7 +426,7 @@ test "isSkipIfNull" {
 
         pub const serde = .{
             .skip = .{
-                .optional_val = SkipMode.@"null",
+                .optional_val = SkipMode.null,
             },
         };
     };

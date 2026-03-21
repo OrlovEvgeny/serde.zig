@@ -111,14 +111,14 @@ pub const StructSerializer = struct {
     pub fn serializeField(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
         var child = Serializer.init(&self.aw.writer, self.allocator);
         try child.serializeString(key);
-        try core_serialize.serialize(@TypeOf(value), value, &child);
+        try core_serialize.serialize(@TypeOf(value), value, &child, .{});
         self.field_count += 1;
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
         var child = Serializer.init(&self.aw.writer, self.allocator);
-        try core_serialize.serialize(@TypeOf(key), key, &child);
-        try core_serialize.serialize(@TypeOf(value), value, &child);
+        try core_serialize.serialize(@TypeOf(key), key, &child, .{});
+        try core_serialize.serialize(@TypeOf(value), value, &child, .{});
         self.field_count += 1;
     }
 
@@ -321,7 +321,7 @@ const testing = std.testing;
 fn serializeToBytes(value: anytype) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, testing.allocator);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 

@@ -495,6 +495,148 @@ When both an external schema and `pub const serde` exist on a type, the external
 
 All `*Schema` variants are available on every format module: `toSliceSchema`, `toWriterSchema`, `fromSliceSchema`, `fromReaderSchema`, etc.
 
+## Out-of-Band Type Overrides
+
+Override how specific types are serialized/deserialized at the call site, without modifying the type. This is useful for third-party types you don't own (e.g. `std.ArrayList`, external library structs) or when you need a one-off representation.
+
+Pass a comptime map of `{Type, Adapter}` pairs to the `*WithMap` functions:
+
+```zig
+const std = @import("std");
+const serde = @import("serde");
+
+// A type from a library you don't control
+const Timestamp = struct {
+    seconds: i64,
+    nanos: u32,
+};
+
+// Define how to serialize/deserialize it
+const TimestampAdapter = struct {
+    pub fn serialize(value: Timestamp, s: anytype) @TypeOf(s.*).Error!void {
+        // Serialize as a single float: seconds.nanos
+        const ms: f64 = @as(f64, @floatFromInt(value.seconds)) +
+            @as(f64, @floatFromInt(value.nanos)) / 1_000_000_000.0;
+        try s.serializeFloat(ms);
+    }
+
+    pub fn deserialize(
+        comptime _: type,
+        _: std.mem.Allocator,
+        d: anytype,
+    ) @TypeOf(d.*).Error!Timestamp {
+        const val = try d.deserializeFloat(f64);
+        const secs: i64 = @intFromFloat(val);
+        const nanos: u32 = @intFromFloat((val - @as(f64, @floatFromInt(secs))) * 1_000_000_000.0);
+        return .{ .seconds = secs, .nanos = nanos };
+    }
+};
+
+// Build the map and use it
+const map = .{ .{ Timestamp, TimestampAdapter } };
+
+const Event = struct {
+    name: []const u8,
+    at: Timestamp,
+};
+
+const event = Event{
+    .name = "deploy",
+    .at = .{ .seconds = 1700000000, .nanos = 500000000 },
+};
+
+const bytes = try serde.json.toSliceWithMap(allocator, event, map);
+// => {"name":"deploy","at":1700000000.5}
+
+var arena = std.heap.ArenaAllocator.init(allocator);
+defer arena.deinit();
+const result = try serde.json.fromSliceWithMap(Event, arena.allocator(), bytes, map);
+// result.at.seconds == 1700000000, result.at.nanos == 500000000
+```
+
+### How it works
+
+The map is a comptime tuple where each entry is `.{ TargetType, AdapterModule }`. The adapter module must provide:
+
+- `fn serialize(value: T, s: anytype) !void` -- writes the value to the serializer
+- `fn deserialize(comptime T: type, allocator: Allocator, d: anytype) !T` -- reads the value from the deserializer
+
+When serde encounters a type that matches a map entry, it calls the adapter instead of the default comptime-derived serialization. The check happens at every level: top-level values, struct fields, array elements, optional contents, and union payloads.
+
+### Available functions
+
+Every format module provides map-aware variants:
+
+```zig
+// Serialize
+const bytes = try serde.json.toSliceWithMap(allocator, value, map);
+try serde.json.toWriterWithMap(&writer, value, map);
+
+// Deserialize
+const val = try serde.json.fromSliceWithMap(T, allocator, bytes, map);
+const val = try serde.json.fromSliceBorrowedWithMap(T, allocator, bytes, map);
+const val = try serde.json.fromReaderWithMap(T, allocator, &reader, map);
+```
+
+For more control, use the core functions directly:
+
+```zig
+try serde.serializeWith(T, value, &serializer, map);
+const val = try serde.deserializeWith(T, allocator, &deserializer, map);
+```
+
+### Precedence
+
+When multiple customization mechanisms apply to the same type:
+
+1. `zerdeSerialize` / `zerdeDeserialize` on the type itself (highest priority)
+2. Out-of-band map entry
+3. Default comptime-derived behavior (lowest priority
+
+### Example: `std.ArrayList(u8)` as string
+
+```zig
+const ArrayListAdapter = struct {
+    pub fn serialize(value: std.ArrayList(u8), s: anytype) @TypeOf(s.*).Error!void {
+        try s.serializeString(value.items);
+    }
+
+    pub fn deserialize(
+        comptime _: type,
+        allocator: std.mem.Allocator,
+        d: anytype,
+    ) @TypeOf(d.*).Error!std.ArrayList(u8) {
+        const str = try d.deserializeString(allocator);
+        var list = std.ArrayList(u8).empty;
+        // steal the allocated string buffer
+        list.items = @constCast(str);
+        list.capacity = str.len;
+        list.items.len = str.len;
+        return list;
+    }
+};
+
+const map = .{ .{ std.ArrayList(u8), ArrayListAdapter } };
+
+const Response = struct {
+    status: u16,
+    body: std.ArrayList(u8),
+};
+
+const resp = Response{
+    .status = 200,
+    .body = blk: {
+        var b = std.ArrayList(u8).empty;
+        try b.appendSlice(allocator, "OK");
+        break :blk b;
+    },
+};
+
+const bytes = try serde.json.toSliceWithMap(allocator, resp, map);
+// => {"status":200,"body":"OK"}
+// Without the map, body would serialize as {"items":"OK","capacity":N,"items.len":2}
+```
+
 ## Custom Serialization
 
 For full control, declare `zerdeSerialize` and/or `zerdeDeserialize` on your type:

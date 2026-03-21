@@ -37,7 +37,7 @@ pub fn toWriter(allocator: std.mem.Allocator, writer: *std.io.Writer, value: any
         @compileError("TOML top-level value must be a struct, got: " ++ @typeName(T));
 
     var ser = Serializer.init(writer, allocator);
-    try core_serialize.serialize(T, value, &ser);
+    try core_serialize.serialize(T, value, &ser, .{});
 }
 
 // Schema-aware API.
@@ -56,7 +56,7 @@ pub fn toWriterSchema(allocator: std.mem.Allocator, writer: *std.io.Writer, valu
         @compileError("TOML top-level value must be a struct, got: " ++ @typeName(T));
 
     var ser = Serializer.init(writer, allocator);
-    try core_serialize.serializeSchema(T, value, &ser, schema);
+    try core_serialize.serializeSchema(T, value, &ser, schema, .{});
 }
 
 /// Deserialize a struct of type T from a TOML byte slice with an external schema.
@@ -66,7 +66,7 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
 
     const table = try parser_mod.parse(allocator, input);
     var deser = Deserializer.init(&table);
-    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
 }
 
 /// Deserialize from a reader with an external schema.
@@ -84,7 +84,7 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 
     const table = try parser_mod.parse(allocator, input);
     var deser = Deserializer.init(&table);
-    return core_deserialize.deserialize(T, allocator, &deser);
+    return core_deserialize.deserialize(T, allocator, &deser, .{});
 }
 
 /// Deserialize a value of type T from a reader.
@@ -639,7 +639,7 @@ test "serialize skip if null" {
         email: ?[]const u8,
 
         pub const serde = .{
-            .skip = .{ .email = serde_opts.SkipMode.@"null" },
+            .skip = .{ .email = serde_opts.SkipMode.null },
         };
     };
 

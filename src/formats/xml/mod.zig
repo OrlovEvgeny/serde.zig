@@ -135,9 +135,9 @@ fn xmlSerialize(
         writer.writeAll("<value>") catch return error.WriteFailed;
         var ser = serializer_mod.Serializer.init(writer, opts);
         if (@TypeOf(schema) != void) {
-            try core_serialize.serializeSchema(T, value, &ser, schema);
+            try core_serialize.serializeSchema(T, value, &ser, schema, .{});
         } else {
-            try core_serialize.serialize(T, value, &ser);
+            try core_serialize.serialize(T, value, &ser, .{});
         }
         writer.writeAll("</value>") catch return error.WriteFailed;
     }
@@ -321,9 +321,9 @@ fn xmlDeserialize(
                     .borrow_strings = borrow,
                 };
                 if (@TypeOf(schema) != void) {
-                    return core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+                    return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
                 } else {
-                    return core_deserialize.deserialize(T, allocator, &deser);
+                    return core_deserialize.deserialize(T, allocator, &deser, .{});
                 }
             },
             .self_closing => {
@@ -340,7 +340,7 @@ fn xmlDeserialize(
             .scanner = scanner,
             .borrow_strings = borrow,
         };
-        return core_deserialize.deserialize(T, allocator, &deser);
+        return core_deserialize.deserialize(T, allocator, &deser, .{});
     }
 }
 

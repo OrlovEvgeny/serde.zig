@@ -164,7 +164,7 @@ fn deserializeValue(comptime T: type, val: *const Value, allocator: Allocator) D
         .@"struct" => {
             if (val.* != .table) return error.WrongType;
             var deser = Deserializer.init(&val.table);
-            return core_deserialize.deserialize(T, allocator, &deser);
+            return core_deserialize.deserialize(T, allocator, &deser, .{});
         },
         .@"enum" => {
             if (comptime opts.getEnumRepr(T) == .integer) {
@@ -189,7 +189,7 @@ fn deserializeValue(comptime T: type, val: *const Value, allocator: Allocator) D
             // calls deserializeStruct on a ValueDeserializer.
             if (val.* == .table) {
                 var vd = ValueDeserializer.init(val);
-                return core_deserialize.deserialize(T, allocator, &vd);
+                return core_deserialize.deserialize(T, allocator, &vd, .{});
             }
             return error.WrongType;
         },
@@ -409,7 +409,7 @@ test "deserialize struct" {
     defer arena.deinit();
     const table = try parser_mod.parse(arena.allocator(), "x = 10\ny = 20\n");
     var deser = Deserializer.init(&table);
-    const point = try core_deserialize.deserialize(Point, arena.allocator(), &deser);
+    const point = try core_deserialize.deserialize(Point, arena.allocator(), &deser, .{});
     try testing.expectEqual(@as(i32, 10), point.x);
     try testing.expectEqual(@as(i32, 20), point.y);
 }
@@ -427,7 +427,7 @@ test "deserialize nested struct" {
         \\
     );
     var deser = Deserializer.init(&table);
-    const val = try core_deserialize.deserialize(Outer, arena.allocator(), &deser);
+    const val = try core_deserialize.deserialize(Outer, arena.allocator(), &deser, .{});
     try testing.expectEqualStrings("test", val.name);
     try testing.expectEqual(@as(i32, 42), val.inner.val);
 }
@@ -447,7 +447,7 @@ test "deserialize optional missing via struct" {
     defer arena.deinit();
     const table = try parser_mod.parse(arena.allocator(), "a = 5\n");
     var deser = Deserializer.init(&table);
-    const val = try core_deserialize.deserialize(Cfg, arena.allocator(), &deser);
+    const val = try core_deserialize.deserialize(Cfg, arena.allocator(), &deser, .{});
     try testing.expectEqual(@as(i32, 5), val.a);
     try testing.expectEqual(@as(?i32, null), val.b);
 }
@@ -497,7 +497,7 @@ test "deserialize missing required field" {
     defer arena.deinit();
     const table = try parser_mod.parse(arena.allocator(), "a = 1\n");
     var deser = Deserializer.init(&table);
-    const result = core_deserialize.deserialize(Req, arena.allocator(), &deser);
+    const result = core_deserialize.deserialize(Req, arena.allocator(), &deser, .{});
     try testing.expectError(error.MissingField, result);
 }
 
@@ -507,7 +507,7 @@ test "deserialize struct with default" {
     defer arena.deinit();
     const table = try parser_mod.parse(arena.allocator(), "name = \"app\"\n");
     var deser = Deserializer.init(&table);
-    const val = try core_deserialize.deserialize(Cfg, arena.allocator(), &deser);
+    const val = try core_deserialize.deserialize(Cfg, arena.allocator(), &deser, .{});
     try testing.expectEqualStrings("app", val.name);
     try testing.expectEqual(@as(i32, 3), val.retries);
 }

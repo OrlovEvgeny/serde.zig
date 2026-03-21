@@ -97,7 +97,7 @@ pub const StructSerializer = struct {
             // Unwrap and serialize the inner value.
             try self.parent.writeIndent();
             self.parent.out.writeAll("<" ++ key ++ ">") catch return error.WriteFailed;
-            try core_serialize.serialize(@typeInfo(T).optional.child, value.?, self.parent);
+            try core_serialize.serialize(@typeInfo(T).optional.child, value.?, self.parent, .{});
             self.parent.out.writeAll("</" ++ key ++ ">") catch return error.WriteFailed;
             return;
         }
@@ -107,7 +107,7 @@ pub const StructSerializer = struct {
             try self.parent.writeIndent();
             self.parent.out.writeAll("<" ++ key ++ ">") catch return error.WriteFailed;
             self.parent.depth += 1;
-            try core_serialize.serialize(T, value, self.parent);
+            try core_serialize.serialize(T, value, self.parent, .{});
             self.parent.depth -= 1;
             try self.parent.writeIndent();
             self.parent.out.writeAll("</" ++ key ++ ">") catch return error.WriteFailed;
@@ -130,14 +130,14 @@ pub const StructSerializer = struct {
                     try self.parent.writeIndent();
                     self.parent.out.writeAll("<item>") catch return error.WriteFailed;
                     self.parent.depth += 1;
-                    try core_serialize.serialize(Child, elem, self.parent);
+                    try core_serialize.serialize(Child, elem, self.parent, .{});
                     self.parent.depth -= 1;
                     try self.parent.writeIndent();
                     self.parent.out.writeAll("</item>") catch return error.WriteFailed;
                 } else {
                     try self.parent.writeIndent();
                     self.parent.out.writeAll("<item>") catch return error.WriteFailed;
-                    try core_serialize.serialize(Child, elem, self.parent);
+                    try core_serialize.serialize(Child, elem, self.parent, .{});
                     self.parent.out.writeAll("</item>") catch return error.WriteFailed;
                 }
             }
@@ -150,7 +150,7 @@ pub const StructSerializer = struct {
         // Scalar: <key>value</key>.
         try self.parent.writeIndent();
         self.parent.out.writeAll("<" ++ key ++ ">") catch return error.WriteFailed;
-        try core_serialize.serialize(T, value, self.parent);
+        try core_serialize.serialize(T, value, self.parent, .{});
         self.parent.out.writeAll("</" ++ key ++ ">") catch return error.WriteFailed;
     }
 
@@ -164,7 +164,7 @@ pub const StructSerializer = struct {
         self.parent.out.writeByte('<') catch return error.WriteFailed;
         self.parent.out.writeAll(key_str) catch return error.WriteFailed;
         self.parent.out.writeByte('>') catch return error.WriteFailed;
-        try core_serialize.serialize(T, value, self.parent);
+        try core_serialize.serialize(T, value, self.parent, .{});
         self.parent.out.writeAll("</") catch return error.WriteFailed;
         self.parent.out.writeAll(key_str) catch return error.WriteFailed;
         self.parent.out.writeByte('>') catch return error.WriteFailed;
@@ -246,7 +246,7 @@ const testing = std.testing;
 fn serializeToString(value: anytype, opts: Options) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, opts);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 

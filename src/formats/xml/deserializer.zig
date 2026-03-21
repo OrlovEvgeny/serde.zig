@@ -89,7 +89,7 @@ pub const Deserializer = struct {
             _ = try self.scanner.next();
             return null;
         }
-        return try core_deserialize.deserialize(T, allocator, self);
+        return try core_deserialize.deserialize(T, allocator, self, .{});
     }
 
     pub fn deserializeEnum(self: *Deserializer, comptime T: type) Error!T {
@@ -114,7 +114,7 @@ pub const Deserializer = struct {
                             try self.skipToClose(name);
                             return @unionInit(T, field.name, {});
                         } else {
-                            const payload = try core_deserialize.deserialize(field.type, allocator, self);
+                            const payload = try core_deserialize.deserialize(field.type, allocator, self, .{});
                             try self.skipToClose(name);
                             return @unionInit(T, field.name, payload);
                         }
@@ -161,7 +161,7 @@ pub const Deserializer = struct {
             switch (tok) {
                 .element_open => {
                     _ = try self.scanner.next(); // consume <item>
-                    const elem = try core_deserialize.deserialize(Child, allocator, self);
+                    const elem = try core_deserialize.deserialize(Child, allocator, self, .{});
                     items.append(allocator, elem) catch return error.OutOfMemory;
                     // Consume closing </item>.
                     const close = try self.scanner.next();
@@ -296,7 +296,7 @@ pub const MapAccess = struct {
 
         // Child element value.
         var deser = Deserializer{ .scanner = self.scanner.*, .borrow_strings = self.borrow_strings };
-        const result = try core_deserialize.deserialize(T, allocator, &deser);
+        const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
         self.scanner.* = deser.scanner;
 
         // Consume the closing tag of this child element.
@@ -361,7 +361,7 @@ pub const SeqAccess = struct {
                 .element_open => {
                     _ = try self.scanner.next();
                     var deser = Deserializer{ .scanner = self.scanner.*, .borrow_strings = self.borrow_strings };
-                    const result = try core_deserialize.deserialize(T, allocator, &deser);
+                    const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
                     self.scanner.* = deser.scanner;
                     // Consume closing tag.
                     const close = try self.scanner.peek();
@@ -481,7 +481,7 @@ test "deserialize enum" {
 test "deserialize struct" {
     const Point = struct { x: i32, y: i32 };
     var d = Deserializer.init("<x>10</x><y>20</y>");
-    const point = try core_deserialize.deserialize(Point, testing.allocator, &d);
+    const point = try core_deserialize.deserialize(Point, testing.allocator, &d, .{});
     try testing.expectEqual(@as(i32, 10), point.x);
     try testing.expectEqual(@as(i32, 20), point.y);
 }
@@ -490,7 +490,7 @@ test "deserialize struct with optional missing" {
     const Opt = struct { a: i32, b: ?i32 };
     // Only 'a' present, 'b' should default to null.
     var d = Deserializer.init("<a>5</a>");
-    const val = try core_deserialize.deserialize(Opt, testing.allocator, &d);
+    const val = try core_deserialize.deserialize(Opt, testing.allocator, &d, .{});
     try testing.expectEqual(@as(i32, 5), val.a);
     try testing.expectEqual(@as(?i32, null), val.b);
 }

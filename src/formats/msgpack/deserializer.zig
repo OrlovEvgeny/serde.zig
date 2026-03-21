@@ -96,7 +96,7 @@ pub const Deserializer = struct {
             self.pos += 1;
             return null;
         }
-        return try core_deserialize.deserialize(T, allocator, self);
+        return try core_deserialize.deserialize(T, allocator, self, .{});
     }
 
     pub fn deserializeEnum(self: *Deserializer, comptime T: type) Error!T {
@@ -152,7 +152,7 @@ pub const Deserializer = struct {
                     if (nil_tag != 0xc0) return error.WrongType;
                     return @unionInit(T, field.name, {});
                 } else {
-                    const payload = try core_deserialize.deserialize(field.type, allocator, self);
+                    const payload = try core_deserialize.deserialize(field.type, allocator, self, .{});
                     return @unionInit(T, field.name, payload);
                 }
             }
@@ -179,7 +179,7 @@ pub const Deserializer = struct {
         errdefer items.deinit(allocator);
 
         for (0..len) |_| {
-            const elem = try core_deserialize.deserialize(Child, allocator, self);
+            const elem = try core_deserialize.deserialize(Child, allocator, self, .{});
             items.append(allocator, elem) catch return error.OutOfMemory;
         }
 
@@ -238,7 +238,7 @@ pub const MapAccess = struct {
 
     pub fn nextValue(self: *MapAccess, comptime T: type, allocator: Allocator) Error!T {
         self.remaining -= 1;
-        return core_deserialize.deserialize(T, allocator, self.parent);
+        return core_deserialize.deserialize(T, allocator, self.parent, .{});
     }
 
     pub fn skipValue(self: *MapAccess) Error!void {
@@ -260,7 +260,7 @@ pub const SeqAccess = struct {
     pub fn nextElement(self: *SeqAccess, comptime T: type, allocator: Allocator) Error!?T {
         if (self.remaining == 0) return null;
         self.remaining -= 1;
-        const val = try core_deserialize.deserialize(T, allocator, self.parent);
+        const val = try core_deserialize.deserialize(T, allocator, self.parent, .{});
         return val;
     }
 };
@@ -578,7 +578,7 @@ test "deserialize bytes empty" {
 }
 
 test "deserialize wrong type error" {
-    var d = Deserializer.init(&.{0xa2, 'h', 'i'});
+    var d = Deserializer.init(&.{ 0xa2, 'h', 'i' });
     try testing.expectError(error.WrongType, d.deserializeBool());
 }
 
