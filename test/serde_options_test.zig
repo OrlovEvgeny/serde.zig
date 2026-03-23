@@ -27,7 +27,7 @@ const SkipMix = struct {
     pub const serde = .{
         .skip = .{
             .token = sz.SkipMode.always,
-            .email = sz.SkipMode.@"null",
+            .email = sz.SkipMode.null,
             .tags = sz.SkipMode.empty,
         },
     };
@@ -439,7 +439,7 @@ test "options: rename + skip + default combined JSON" {
             .rename_all = sz.NamingConvention.camel_case,
             .skip = .{
                 .secret = sz.SkipMode.always,
-                .email = sz.SkipMode.@"null",
+                .email = sz.SkipMode.null,
             },
         };
     };

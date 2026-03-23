@@ -9,185 +9,196 @@ pub const Options = struct {
 
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
-pub const Serializer = struct {
-    out: *std.io.Writer,
-    depth: u32 = 0,
-    options: Options,
+pub fn Serializer(comptime _map: anytype) type {
+    return struct {
+        const Self = @This();
 
-    // Each bit tracks whether a nesting level needs a comma before the next element.
-    needs_comma: u64 = 0,
+        out: *std.io.Writer,
+        depth: u32 = 0,
+        options: Options,
 
-    pub const Error = SerializeError;
+        // Each bit tracks whether a nesting level needs a comma before the next element.
+        needs_comma: u64 = 0,
 
-    pub fn init(out: *std.io.Writer, opts: Options) Serializer {
-        return .{ .out = out, .options = opts };
-    }
+        comptime _oob_map: @TypeOf(_map) = _map,
 
-    pub fn serializeBool(self: *Serializer, value: bool) Error!void {
-        self.out.writeAll(if (value) "true" else "false") catch return error.WriteFailed;
-    }
+        pub const Error = SerializeError;
+        pub const oob_map = _map;
 
-    pub fn serializeInt(self: *Serializer, value: anytype) Error!void {
-        self.out.print("{d}", .{value}) catch return error.WriteFailed;
-    }
+        pub fn init(out: *std.io.Writer, opts: Options) Self {
+            return .{ .out = out, .options = opts };
+        }
 
-    pub fn serializeFloat(self: *Serializer, value: anytype) Error!void {
-        if (std.math.isNan(value)) {
+        pub fn serializeBool(self: *Self, value: bool) Error!void {
+            self.out.writeAll(if (value) "true" else "false") catch return error.WriteFailed;
+        }
+
+        pub fn serializeInt(self: *Self, value: anytype) Error!void {
+            self.out.print("{d}", .{value}) catch return error.WriteFailed;
+        }
+
+        pub fn serializeFloat(self: *Self, value: anytype) Error!void {
+            if (std.math.isNan(value)) {
+                self.out.writeAll("null") catch return error.WriteFailed;
+                return;
+            }
+            if (std.math.isInf(value)) {
+                self.out.writeAll("null") catch return error.WriteFailed;
+                return;
+            }
+            self.out.print("{d}", .{value}) catch return error.WriteFailed;
+        }
+
+        pub fn serializeString(self: *Self, value: []const u8) Error!void {
+            json_writer.writeJsonString(self.out, value) catch return error.WriteFailed;
+        }
+
+        pub fn serializeNull(self: *Self) Error!void {
             self.out.writeAll("null") catch return error.WriteFailed;
-            return;
         }
-        if (std.math.isInf(value)) {
+
+        pub fn serializeVoid(self: *Self) Error!void {
             self.out.writeAll("null") catch return error.WriteFailed;
-            return;
         }
-        self.out.print("{d}", .{value}) catch return error.WriteFailed;
-    }
 
-    pub fn serializeString(self: *Serializer, value: []const u8) Error!void {
-        json_writer.writeJsonString(self.out, value) catch return error.WriteFailed;
-    }
-
-    pub fn serializeNull(self: *Serializer) Error!void {
-        self.out.writeAll("null") catch return error.WriteFailed;
-    }
-
-    pub fn serializeVoid(self: *Serializer) Error!void {
-        self.out.writeAll("null") catch return error.WriteFailed;
-    }
-
-    pub fn beginStruct(self: *Serializer) Error!StructSerializer {
-        self.out.writeByte('{') catch return error.WriteFailed;
-        self.pushLevel();
-        return .{ .parent = self };
-    }
-
-    pub fn beginArray(self: *Serializer) Error!ArraySerializer {
-        self.out.writeByte('[') catch return error.WriteFailed;
-        self.pushLevel();
-        return .{ .parent = self };
-    }
-
-    fn pushLevel(self: *Serializer) void {
-        self.depth += 1;
-        self.needs_comma &= ~(@as(u64, 1) << @intCast(self.depth));
-    }
-
-    fn popLevel(self: *Serializer) void {
-        self.depth -= 1;
-    }
-
-    fn writeComma(self: *Serializer) Error!void {
-        const bit = @as(u64, 1) << @intCast(self.depth);
-        if (self.needs_comma & bit != 0) {
-            self.out.writeByte(',') catch return error.WriteFailed;
+        pub fn beginStruct(self: *Self) Error!StructSerializer(_map) {
+            self.out.writeByte('{') catch return error.WriteFailed;
+            self.pushLevel();
+            return .{ .parent = self };
         }
-        self.needs_comma |= bit;
-    }
 
-    fn writeIndent(self: *Serializer) Error!void {
-        if (!self.options.pretty) return;
-        self.out.writeByte('\n') catch return error.WriteFailed;
-        const spaces = self.depth * self.options.indent;
-        for (0..spaces) |_| {
-            self.out.writeByte(' ') catch return error.WriteFailed;
+        pub fn beginArray(self: *Self) Error!ArraySerializer(_map) {
+            self.out.writeByte('[') catch return error.WriteFailed;
+            self.pushLevel();
+            return .{ .parent = self };
         }
-    }
 
-    fn writeClosingIndent(self: *Serializer) Error!void {
-        if (!self.options.pretty) return;
-        self.out.writeByte('\n') catch return error.WriteFailed;
-        const spaces = self.depth * self.options.indent;
-        for (0..spaces) |_| {
-            self.out.writeByte(' ') catch return error.WriteFailed;
+        fn pushLevel(self: *Self) void {
+            self.depth += 1;
+            self.needs_comma &= ~(@as(u64, 1) << @intCast(self.depth));
         }
-    }
-};
 
-pub const StructSerializer = struct {
-    parent: *Serializer,
-
-    pub const Error = SerializeError;
-
-    pub fn serializeField(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
-        try self.parent.writeComma();
-        try self.parent.writeIndent();
-        try self.parent.serializeString(key);
-        self.parent.out.writeByte(':') catch return error.WriteFailed;
-        if (self.parent.options.pretty) {
-            self.parent.out.writeByte(' ') catch return error.WriteFailed;
+        fn popLevel(self: *Self) void {
+            self.depth -= 1;
         }
-        try core_serialize.serialize(@TypeOf(value), value, self.parent);
-    }
 
-    pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
-        try self.parent.writeComma();
-        try self.parent.writeIndent();
-        try core_serialize.serialize(@TypeOf(key), key, self.parent);
-        self.parent.out.writeByte(':') catch return error.WriteFailed;
-        if (self.parent.options.pretty) {
-            self.parent.out.writeByte(' ') catch return error.WriteFailed;
+        fn writeComma(self: *Self) Error!void {
+            const bit = @as(u64, 1) << @intCast(self.depth);
+            if (self.needs_comma & bit != 0) {
+                self.out.writeByte(',') catch return error.WriteFailed;
+            }
+            self.needs_comma |= bit;
         }
-        try core_serialize.serialize(@TypeOf(value), value, self.parent);
-    }
 
-    pub fn end(self: *StructSerializer) Error!void {
-        self.parent.popLevel();
-        try self.parent.writeClosingIndent();
-        self.parent.out.writeByte('}') catch return error.WriteFailed;
-    }
-};
+        fn writeIndent(self: *Self) Error!void {
+            if (!self.options.pretty) return;
+            self.out.writeByte('\n') catch return error.WriteFailed;
+            const spaces = self.depth * self.options.indent;
+            for (0..spaces) |_| {
+                self.out.writeByte(' ') catch return error.WriteFailed;
+            }
+        }
 
-pub const ArraySerializer = struct {
-    parent: *Serializer,
+        fn writeClosingIndent(self: *Self) Error!void {
+            if (!self.options.pretty) return;
+            self.out.writeByte('\n') catch return error.WriteFailed;
+            const spaces = self.depth * self.options.indent;
+            for (0..spaces) |_| {
+                self.out.writeByte(' ') catch return error.WriteFailed;
+            }
+        }
+    };
+}
 
-    pub const Error = SerializeError;
+pub fn StructSerializer(comptime _map: anytype) type {
+    return struct {
+        const Self = @This();
+        parent: *Serializer(_map),
 
-    pub fn serializeBool(self: *ArraySerializer, value: bool) Error!void {
-        try self.writeElement();
-        try self.parent.serializeBool(value);
-    }
-    pub fn serializeInt(self: *ArraySerializer, value: anytype) Error!void {
-        try self.writeElement();
-        try self.parent.serializeInt(value);
-    }
-    pub fn serializeFloat(self: *ArraySerializer, value: anytype) Error!void {
-        try self.writeElement();
-        try self.parent.serializeFloat(value);
-    }
-    pub fn serializeString(self: *ArraySerializer, value: []const u8) Error!void {
-        try self.writeElement();
-        try self.parent.serializeString(value);
-    }
-    pub fn serializeNull(self: *ArraySerializer) Error!void {
-        try self.writeElement();
-        try self.parent.serializeNull();
-    }
-    pub fn serializeVoid(self: *ArraySerializer) Error!void {
-        try self.writeElement();
-        try self.parent.serializeVoid();
-    }
+        pub const Error = SerializeError;
 
-    pub fn beginStruct(self: *ArraySerializer) Error!StructSerializer {
-        try self.writeElement();
-        return self.parent.beginStruct();
-    }
+        pub fn serializeField(self: *Self, comptime key: []const u8, value: anytype) Error!void {
+            try self.parent.writeComma();
+            try self.parent.writeIndent();
+            try self.parent.serializeString(key);
+            self.parent.out.writeByte(':') catch return error.WriteFailed;
+            if (self.parent.options.pretty) {
+                self.parent.out.writeByte(' ') catch return error.WriteFailed;
+            }
+            try core_serialize.serializeSchema(@TypeOf(value), value, self.parent, {}, _map);
+        }
 
-    pub fn beginArray(self: *ArraySerializer) Error!ArraySerializer {
-        try self.writeElement();
-        return self.parent.beginArray();
-    }
+        pub fn serializeEntry(self: *Self, key: anytype, value: anytype) Error!void {
+            try self.parent.writeComma();
+            try self.parent.writeIndent();
+            try core_serialize.serializeSchema(@TypeOf(key), key, self.parent, {}, _map);
+            self.parent.out.writeByte(':') catch return error.WriteFailed;
+            if (self.parent.options.pretty) {
+                self.parent.out.writeByte(' ') catch return error.WriteFailed;
+            }
+            try core_serialize.serializeSchema(@TypeOf(value), value, self.parent, {}, _map);
+        }
 
-    fn writeElement(self: *ArraySerializer) Error!void {
-        try self.parent.writeComma();
-        try self.parent.writeIndent();
-    }
+        pub fn end(self: *Self) Error!void {
+            self.parent.popLevel();
+            try self.parent.writeClosingIndent();
+            self.parent.out.writeByte('}') catch return error.WriteFailed;
+        }
+    };
+}
 
-    pub fn end(self: *ArraySerializer) Error!void {
-        self.parent.popLevel();
-        try self.parent.writeClosingIndent();
-        self.parent.out.writeByte(']') catch return error.WriteFailed;
-    }
-};
+pub fn ArraySerializer(comptime _map: anytype) type {
+    return struct {
+        const Self = @This();
+        parent: *Serializer(_map),
+
+        pub const Error = SerializeError;
+
+        pub fn serializeBool(self: *Self, value: bool) Error!void {
+            try self.writeElement();
+            try self.parent.serializeBool(value);
+        }
+        pub fn serializeInt(self: *Self, value: anytype) Error!void {
+            try self.writeElement();
+            try self.parent.serializeInt(value);
+        }
+        pub fn serializeFloat(self: *Self, value: anytype) Error!void {
+            try self.writeElement();
+            try self.parent.serializeFloat(value);
+        }
+        pub fn serializeString(self: *Self, value: []const u8) Error!void {
+            try self.writeElement();
+            try self.parent.serializeString(value);
+        }
+        pub fn serializeNull(self: *Self) Error!void {
+            try self.writeElement();
+            try self.parent.serializeNull();
+        }
+        pub fn serializeVoid(self: *Self) Error!void {
+            try self.writeElement();
+            try self.parent.serializeVoid();
+        }
+        pub fn beginArray(self: *Self) Error!Self {
+            try self.writeElement();
+            return self.parent.beginArray();
+        }
+        pub fn beginStruct(self: *Self) Error!StructSerializer(_map) {
+            try self.writeElement();
+            return self.parent.beginStruct();
+        }
+
+        pub fn end(self: *Self) Error!void {
+            self.parent.popLevel();
+            try self.parent.writeClosingIndent();
+            self.parent.out.writeByte(']') catch return error.WriteFailed;
+        }
+
+        fn writeElement(self: *Self) Error!void {
+            try self.parent.writeComma();
+            try self.parent.writeIndent();
+        }
+    };
+}
 
 // Tests.
 
@@ -195,8 +206,8 @@ const testing = std.testing;
 
 fn serializeToString(value: anytype, opts: Options) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(testing.allocator);
-    var ser = Serializer.init(&aw.writer, opts);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    var ser = Serializer(.{}).init(&aw.writer, opts);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 

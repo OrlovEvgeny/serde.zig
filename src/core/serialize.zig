@@ -11,8 +11,21 @@ pub fn serialize(
     comptime T: type,
     value: T,
     serializer: anytype,
+    comptime map: anytype,
 ) @TypeOf(serializer.*).Error!void {
-    return serializeSchema(T, value, serializer, {});
+    return serializeSchema(T, value, serializer, {}, map);
+}
+
+/// Serialize any value with out-of-band type overrides.
+/// The map is a tuple of `.{ .{ Type, Adapter }, ... }` where Adapter has a
+/// `fn serialize(value: T, s: anytype) !void` method.
+pub fn serializeWith(
+    comptime T: type,
+    value: T,
+    serializer: anytype,
+    comptime map: anytype,
+) @TypeOf(serializer.*).Error!void {
+    return serializeSchema(T, value, serializer, {}, map);
 }
 
 /// Serialize any value using a format-specific serializer with an external schema.
@@ -23,9 +36,17 @@ pub fn serializeSchema(
     value: T,
     serializer: anytype,
     comptime schema: anytype,
+    comptime map: anytype,
 ) @TypeOf(serializer.*).Error!void {
     if (comptime options.hasCustomSerializer(T)) {
         return value.zerdeSerialize(serializer);
+    }
+
+    // Out-of-band override: check the map for a matching type.
+    if (comptime @TypeOf(map) != void) {
+        if (comptime findOobAdapter(T, map)) |adapter| {
+            return adapter.serialize(value, serializer);
+        }
     }
 
     switch (comptime typeKind(T)) {
@@ -34,15 +55,15 @@ pub fn serializeSchema(
         .float => return serializer.serializeFloat(value),
         .void => return serializer.serializeVoid(),
         .string => return serializer.serializeString(value),
-        .optional => return serializeOptionalSchema(T, value, serializer, schema),
-        .pointer => return serializeSchema(Child(T), value.*, serializer, schema),
-        .array => return serializeArray(T, value, serializer),
-        .slice => return serializeSlice(T, value, serializer),
-        .@"struct" => return serializeStructSchema(T, value, serializer, schema),
-        .tuple => return serializeTuple(T, value, serializer),
-        .@"union" => return serializeUnionSchema(T, value, serializer, schema),
+        .optional => return serializeOptionalSchema(T, value, serializer, schema, map),
+        .pointer => return serializeSchema(Child(T), value.*, serializer, schema, map),
+        .array => return serializeArraySchema(T, value, serializer, map),
+        .slice => return serializeSliceSchema(T, value, serializer, map),
+        .@"struct" => return serializeStructSchema(T, value, serializer, schema, map),
+        .tuple => return serializeTupleSchema(T, value, serializer, map),
+        .@"union" => return serializeUnionSchema(T, value, serializer, schema, map),
         .@"enum" => return serializeEnumSchema(T, value, serializer, schema),
-        .map => return serializeMap(T, value, serializer),
+        .map => return serializeMapSchema(T, value, serializer, map),
         .bytes => {
             if (comptime @hasDecl(@TypeOf(serializer.*), "serializeBytes")) {
                 return serializer.serializeBytes(value);
@@ -53,33 +74,44 @@ pub fn serializeSchema(
     }
 }
 
-fn serializeOptionalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
+/// Find an out-of-band adapter for type T in the map tuple.
+/// Map entries are `.{ Type, AdapterModule }`.
+fn findOobAdapter(comptime T: type, comptime map: anytype) ?type {
+    inline for (@typeInfo(@TypeOf(map)).@"struct".fields) |field| {
+        const entry = @field(map, field.name);
+        if (entry[0] == T) return entry[1];
+    }
+    return null;
+}
+
+fn serializeOptionalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     if (value) |v| {
-        return serializeSchema(Child(T), v, serializer, schema);
+        return serializeSchema(Child(T), v, serializer, schema, map);
     } else {
         return serializer.serializeNull();
     }
 }
 
-fn serializeArray(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeArraySchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const child = Child(T);
     var arr = try serializer.beginArray();
     for (value) |elem| {
-        try serialize(child, elem, &arr);
+        try serializeSchema(child, elem, &arr, {}, map);
     }
     return arr.end();
 }
 
-fn serializeSlice(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeSliceSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const child = Child(T);
     var arr = try serializer.beginArray();
     for (value) |elem| {
-        try serialize(child, elem, &arr);
+        try serializeSchema(child, elem, &arr, {}, map);
     }
     return arr.end();
 }
 
-fn serializeStructSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeStructSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
+    _ = map;
     const info = @typeInfo(T).@"struct";
 
     var ss = try serializer.beginStruct();
@@ -122,29 +154,30 @@ fn serializeStructSchema(comptime T: type, value: T, serializer: anytype, compti
     return ss.end();
 }
 
-fn serializeTuple(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeTupleSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const info = @typeInfo(T).@"struct";
     var arr = try serializer.beginArray();
     inline for (info.fields) |field| {
-        try serialize(field.type, @field(value, field.name), &arr);
+        try serializeSchema(field.type, @field(value, field.name), &arr, {}, map);
     }
     return arr.end();
 }
 
-fn serializeUnionSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeUnionSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const tag_style = comptime options.getUnionTagSchema(T, schema);
     if (tag_style == .external) {
-        return serializeUnionExternal(T, value, serializer);
+        return serializeUnionExternalSchema(T, value, serializer, map);
     } else if (tag_style == .internal) {
         return serializeUnionInternalSchema(T, value, serializer, schema);
     } else if (tag_style == .adjacent) {
         return serializeUnionAdjacentSchema(T, value, serializer, schema);
     } else {
-        return serializeUnionUntagged(T, value, serializer);
+        return serializeUnionUntaggedSchema(T, value, serializer, map);
     }
 }
 
-fn serializeUnionExternal(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeUnionExternalSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
+    _ = map;
     const info = @typeInfo(T).@"union";
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
@@ -200,7 +233,7 @@ fn serializeUnionAdjacentSchema(comptime T: type, value: T, serializer: anytype,
     }
 }
 
-fn serializeUnionUntagged(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeUnionUntaggedSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const info = @typeInfo(T).@"union";
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
@@ -208,7 +241,7 @@ fn serializeUnionUntagged(comptime T: type, value: T, serializer: anytype) @Type
                 return serializer.serializeNull();
             } else {
                 const payload = @field(value, field.name);
-                return serialize(field.type, payload, serializer);
+                return serializeSchema(field.type, payload, serializer, {}, map);
             }
         }
     }
@@ -222,7 +255,8 @@ fn serializeEnumSchema(comptime T: type, value: T, serializer: anytype, comptime
     return serializer.serializeString(@tagName(value));
 }
 
-fn serializeMap(comptime T: type, value: T, serializer: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeMapSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
+    _ = map;
     var ss = try serializer.beginStruct();
     var it = value.iterator();
     while (it.next()) |entry| {
@@ -265,12 +299,12 @@ const MockSerializer = struct {
 
         pub fn serializeField(self: *StructSer, comptime key: []const u8, value: anytype) SerError!void {
             self.parent.events.append(self.parent.alloc, .{ .field = key }) catch return error.OutOfMemory;
-            try serialize(@TypeOf(value), value, self.parent);
+            try serialize(@TypeOf(value), value, self.parent, .{});
         }
 
         pub fn serializeEntry(self: *StructSer, key: anytype, value: anytype) SerError!void {
             _ = key;
-            try serialize(@TypeOf(value), value, self.parent);
+            try serialize(@TypeOf(value), value, self.parent, .{});
         }
 
         pub fn end(self: *StructSer) SerError!void {
@@ -358,28 +392,28 @@ const MockSerializer = struct {
 test "serialize bool" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(bool, true, &mock);
+    try serialize(bool, true, &mock, .{});
     try testing.expectEqual(TestEvent{ .bool_val = true }, mock.events.items[0]);
 }
 
 test "serialize int" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(u32, 42, &mock);
+    try serialize(u32, 42, &mock, .{});
     try testing.expectEqual(TestEvent{ .int_val = 42 }, mock.events.items[0]);
 }
 
 test "serialize float" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(f64, 3.14, &mock);
+    try serialize(f64, 3.14, &mock, .{});
     try testing.expectEqual(TestEvent{ .float_val = 3.14 }, mock.events.items[0]);
 }
 
 test "serialize string" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize([]const u8, "hello", &mock);
+    try serialize([]const u8, "hello", &mock, .{});
     try testing.expectEqualStrings("hello", mock.events.items[0].string_val);
 }
 
@@ -387,7 +421,7 @@ test "serialize optional null" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
     const val: ?u32 = null;
-    try serialize(?u32, val, &mock);
+    try serialize(?u32, val, &mock, .{});
     try testing.expectEqual(TestEvent.null_val, mock.events.items[0]);
 }
 
@@ -395,7 +429,7 @@ test "serialize optional value" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
     const val: ?u32 = 7;
-    try serialize(?u32, val, &mock);
+    try serialize(?u32, val, &mock, .{});
     try testing.expectEqual(TestEvent{ .int_val = 7 }, mock.events.items[0]);
 }
 
@@ -403,7 +437,7 @@ test "serialize struct" {
     const Point = struct { x: i32, y: i32 };
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(Point, .{ .x = 1, .y = 2 }, &mock);
+    try serialize(Point, .{ .x = 1, .y = 2 }, &mock, .{});
     try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
     try testing.expectEqual(TestEvent{ .field = "x" }, mock.events.items[1]);
     try testing.expectEqual(TestEvent{ .int_val = 1 }, mock.events.items[2]);
@@ -426,7 +460,7 @@ test "serialize struct with rename" {
     };
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(User, .{ .id = 1, .first_name = "Bob" }, &mock);
+    try serialize(User, .{ .id = 1, .first_name = "Bob" }, &mock, .{});
     try testing.expectEqualStrings("user_id", mock.events.items[1].field);
     try testing.expectEqualStrings("firstName", mock.events.items[3].field);
 }
@@ -444,7 +478,7 @@ test "serialize struct with skip" {
     };
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(Secret, .{ .name = "test", .token = "secret" }, &mock);
+    try serialize(Secret, .{ .name = "test", .token = "secret" }, &mock, .{});
     try testing.expectEqual(@as(usize, 4), mock.events.items.len);
     try testing.expectEqual(TestEvent{ .field = "name" }, mock.events.items[1]);
 }
@@ -452,7 +486,7 @@ test "serialize struct with skip" {
 test "serialize array" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize([3]i32, .{ 1, 2, 3 }, &mock);
+    try serialize([3]i32, .{ 1, 2, 3 }, &mock, .{});
     try testing.expectEqual(TestEvent.array_begin, mock.events.items[0]);
     try testing.expectEqual(TestEvent{ .int_val = 1 }, mock.events.items[1]);
     try testing.expectEqual(TestEvent{ .int_val = 2 }, mock.events.items[2]);
@@ -464,7 +498,7 @@ test "serialize slice" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
     const data: []const i32 = &.{ 10, 20 };
-    try serialize([]const i32, data, &mock);
+    try serialize([]const i32, data, &mock, .{});
     try testing.expectEqual(TestEvent.array_begin, mock.events.items[0]);
     try testing.expectEqual(TestEvent{ .int_val = 10 }, mock.events.items[1]);
     try testing.expectEqual(TestEvent{ .int_val = 20 }, mock.events.items[2]);
@@ -475,7 +509,7 @@ test "serialize enum" {
     const Color = enum { red, green, blue };
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(Color, .green, &mock);
+    try serialize(Color, .green, &mock, .{});
     try testing.expectEqualStrings("green", mock.events.items[0].string_val);
 }
 
@@ -483,7 +517,7 @@ test "serialize tagged union with void payload" {
     const Cmd = union(enum) { ping: void, quit: void };
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(Cmd, .ping, &mock);
+    try serialize(Cmd, .ping, &mock, .{});
     try testing.expectEqualStrings("ping", mock.events.items[0].string_val);
 }
 
@@ -504,7 +538,7 @@ test "serialize union internal tagging" {
 
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(Command, .ping, &mock);
+    try serialize(Command, .ping, &mock, .{});
     try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
     try testing.expectEqual(TestEvent{ .field = "type" }, mock.events.items[1]);
     try testing.expectEqualStrings("ping", mock.events.items[2].string_val);
@@ -515,7 +549,7 @@ test "serialize tagged union with payload" {
     const Cmd = union(enum) { set: u32, ping: void };
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
-    try serialize(Cmd, .{ .set = 42 }, &mock);
+    try serialize(Cmd, .{ .set = 42 }, &mock, .{});
     try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
     try testing.expectEqual(TestEvent{ .field = "set" }, mock.events.items[1]);
     try testing.expectEqual(TestEvent{ .int_val = 42 }, mock.events.items[2]);
@@ -529,7 +563,7 @@ test "serializeSchema with rename on plain struct" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
     const schema = .{ .rename = .{ .x = "X", .y = "Y" } };
-    try serializeSchema(Point, .{ .x = 1, .y = 2 }, &mock, schema);
+    try serializeSchema(Point, .{ .x = 1, .y = 2 }, &mock, schema, .{});
     try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
     try testing.expectEqualStrings("X", mock.events.items[1].field);
     try testing.expectEqual(TestEvent{ .int_val = 1 }, mock.events.items[2]);
@@ -543,7 +577,7 @@ test "serializeSchema with skip on plain struct" {
     var mock = MockSerializer.init(testing.allocator);
     defer mock.deinit();
     const schema = .{ .skip = .{ .z = options.SkipMode.always } };
-    try serializeSchema(Point, .{ .x = 1, .y = 2, .z = 3 }, &mock, schema);
+    try serializeSchema(Point, .{ .x = 1, .y = 2, .z = 3 }, &mock, schema, .{});
     // Should only have x and y fields.
     try testing.expectEqual(@as(usize, 6), mock.events.items.len);
     try testing.expectEqualStrings("x", mock.events.items[1].field);
@@ -563,6 +597,62 @@ test "serializeSchema overrides T.serde" {
     defer mock.deinit();
     // Schema overrides the rename.
     const schema = .{ .rename = .{ .id = "ID" } };
-    try serializeSchema(User, .{ .id = 1, .first_name = "Bob" }, &mock, schema);
+    try serializeSchema(User, .{ .id = 1, .first_name = "Bob" }, &mock, schema, .{});
     try testing.expectEqualStrings("ID", mock.events.items[1].field);
+}
+
+// Out-of-band (OOB) customization tests.
+
+test "serializeWith: custom adapter for unsupported type" {
+    const Wrapper = struct {
+        inner: u32,
+    };
+
+    const WrapperAdapter = struct {
+        pub fn serialize(value: Wrapper, s: anytype) @TypeOf(s.*).Error!void {
+            try s.serializeInt(value.inner);
+        }
+    };
+
+    var mock = MockSerializer.init(testing.allocator);
+    defer mock.deinit();
+    const map = .{.{ Wrapper, WrapperAdapter }};
+    try serializeWith(Wrapper, .{ .inner = 42 }, &mock, map);
+    try testing.expectEqual(TestEvent{ .int_val = 42 }, mock.events.items[0]);
+}
+
+test "serializeWith: struct containing OOB-overridden type" {
+    const Inner = struct { val: u32 };
+
+    const InnerAdapter = struct {
+        pub fn serialize(value: Inner, s: anytype) @TypeOf(s.*).Error!void {
+            try s.serializeInt(value.val);
+        }
+    };
+
+    // Direct serialization of Inner via OOB map works.
+    var mock = MockSerializer.init(testing.allocator);
+    defer mock.deinit();
+    const map = .{.{ Inner, InnerAdapter }};
+    try serializeWith(Inner, .{ .val = 99 }, &mock, map);
+    // Inner should be serialized via the adapter (as int), not as a struct.
+    try testing.expectEqual(TestEvent{ .int_val = 99 }, mock.events.items[0]);
+}
+
+test "serializeWith: no match falls through to default" {
+    const Point = struct { x: i32, y: i32 };
+    const Unrelated = struct { z: u32 };
+
+    const UnrelatedAdapter = struct {
+        pub fn serialize(_: Unrelated, _: anytype) !void {}
+    };
+
+    var mock = MockSerializer.init(testing.allocator);
+    defer mock.deinit();
+    // Map only has Unrelated, not Point — Point should serialize normally.
+    const map = .{.{ Unrelated, UnrelatedAdapter }};
+    try serializeWith(Point, .{ .x = 1, .y = 2 }, &mock, map);
+    try testing.expectEqual(TestEvent.struct_begin, mock.events.items[0]);
+    try testing.expectEqual(TestEvent{ .field = "x" }, mock.events.items[1]);
+    try testing.expectEqual(TestEvent{ .int_val = 1 }, mock.events.items[2]);
 }

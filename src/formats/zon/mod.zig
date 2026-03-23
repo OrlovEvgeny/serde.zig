@@ -43,7 +43,7 @@ pub fn toWriter(writer: *std.io.Writer, value: anytype) !void {
 /// Serialize with explicit options to a writer.
 pub fn toWriterWith(writer: *std.io.Writer, value: anytype, opts: Options) !void {
     var ser = Serializer.init(writer, opts);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
 }
 
 pub const PrettyOptions = struct { indent: u8 = 4 };
@@ -75,13 +75,13 @@ pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: a
 /// Serialize with options to a writer with an external schema.
 pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opt: Options, comptime schema: anytype) !void {
     var ser = Serializer.init(writer, opt);
-    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
 }
 
 /// Deserialize a value of type T from a ZON byte slice with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.init(input);
-    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -89,7 +89,7 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
 /// Deserialize with zero-copy borrowing and an external schema.
 pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.initBorrowed(input);
-    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -97,7 +97,7 @@ pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, i
 /// Deserialize a value of type T from a ZON byte slice.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.init(input);
-    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -108,7 +108,7 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 /// Still requires an allocator for structs, slices, and other heap-allocated structures.
 pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.initBorrowed(input);
-    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -583,7 +583,7 @@ test "serialize skip if null" {
         email: ?[]const u8,
 
         pub const serde = .{
-            .skip = .{ .email = serde_opts.SkipMode.@"null" },
+            .skip = .{ .email = serde_opts.SkipMode.null },
         };
     };
 

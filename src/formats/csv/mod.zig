@@ -59,7 +59,7 @@ pub fn toWriterWith(writer: *std.io.Writer, value: anytype, dialect: Dialect) !v
     }
 
     for (value) |elem| {
-        try core_serialize.serialize(ElemType, elem, &ser);
+        try core_serialize.serialize(ElemType, elem, &ser, .{});
         try ser.endRow();
     }
 }
@@ -95,7 +95,7 @@ pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, dialect: Diale
     }
 
     for (value) |elem| {
-        try core_serialize.serializeSchema(ElemType, elem, &ser, schema);
+        try core_serialize.serializeSchema(ElemType, elem, &ser, schema, .{});
         try ser.endRow();
     }
 }
@@ -142,7 +142,7 @@ pub fn fromSliceWithSchema(comptime T: type, allocator: std.mem.Allocator, input
         if (row.len == 0) continue;
 
         var deser = Deserializer.init(header_fields, row);
-        const elem = try core_deserialize.deserializeSchema(ElemType, allocator, &deser, schema);
+        const elem = try core_deserialize.deserializeSchema(ElemType, allocator, &deser, schema, .{});
         items.append(allocator, elem) catch return error.OutOfMemory;
     }
 
@@ -211,7 +211,7 @@ pub fn fromSliceWith(comptime T: type, allocator: std.mem.Allocator, input: []co
         if (row.len == 0) continue; // skip empty rows
 
         var deser = Deserializer.init(header_fields, row);
-        const elem = try core_deserialize.deserialize(ElemType, allocator, &deser);
+        const elem = try core_deserialize.deserialize(ElemType, allocator, &deser, .{});
         items.append(allocator, elem) catch return error.OutOfMemory;
     }
 
@@ -309,7 +309,7 @@ pub fn StreamingDeserializer(comptime T: type) type {
             if (row.len == 0) return null;
 
             var deser = Deserializer.init(self.header_fields, row);
-            return try core_deserialize.deserialize(ElemType, self.allocator, &deser);
+            return try core_deserialize.deserialize(ElemType, self.allocator, &deser, .{});
         }
 
         pub fn deinit(self: *Self) void {
@@ -664,7 +664,7 @@ test "serialize skip if null" {
         email: ?[]const u8,
 
         pub const serde = .{
-            .skip = .{ .email = options.SkipMode.@"null" },
+            .skip = .{ .email = options.SkipMode.null },
         };
     };
 

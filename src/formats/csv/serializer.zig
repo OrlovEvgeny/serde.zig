@@ -102,11 +102,11 @@ pub const StructSerializer = struct {
     pub const Error = SerializeError;
 
     pub fn serializeField(self: *StructSerializer, comptime _: []const u8, value: anytype) Error!void {
-        try core_serialize.serialize(@TypeOf(value), value, self.parent);
+        try core_serialize.serialize(@TypeOf(value), value, self.parent, .{});
     }
 
     pub fn serializeEntry(self: *StructSerializer, _: anytype, value: anytype) Error!void {
-        try core_serialize.serialize(@TypeOf(value), value, self.parent);
+        try core_serialize.serialize(@TypeOf(value), value, self.parent, .{});
     }
 
     pub fn end(_: *StructSerializer) Error!void {
@@ -167,7 +167,7 @@ const testing = std.testing;
 fn serializeToString(value: anytype, dialect: Dialect) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, dialect);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 

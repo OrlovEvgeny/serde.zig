@@ -6,6 +6,8 @@ const core_deserialize = @import("../../core/deserialize.zig");
 
 pub const Serializer = serializer_mod.Serializer;
 pub const Deserializer = deserializer_mod.Deserializer;
+pub const StructSerializer = serializer_mod.StructSerializer;
+pub const ArraySerializer = serializer_mod.ArraySerializer;
 pub const Options = serializer_mod.Options;
 
 /// Serialize a value to a JSON byte slice. Caller owns the returned memory.
@@ -16,8 +18,8 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 /// Serialize with explicit options.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(allocator);
-    var ser = Serializer.init(&aw.writer, opts);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    var ser = Serializer(.{}).init(&aw.writer, opts);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 
@@ -28,8 +30,8 @@ pub fn toWriter(writer: *std.io.Writer, value: anytype) !void {
 
 /// Serialize with explicit options to a writer.
 pub fn toWriterWith(writer: *std.io.Writer, value: anytype, opts: Options) !void {
-    var ser = Serializer.init(writer, opts);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    var ser = Serializer(.{}).init(writer, opts);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
 }
 
 /// Serialize a value to a null-terminated JSON byte slice. Caller owns the returned memory.
@@ -56,8 +58,8 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 /// Serialize with explicit options and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opts: Options, comptime schema: anytype) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(allocator);
-    var ser = Serializer.init(&aw.writer, opts);
-    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+    var ser = Serializer(.{}).init(&aw.writer, opts);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
     return aw.toOwnedSlice();
 }
 
@@ -68,14 +70,14 @@ pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: a
 
 /// Serialize with explicit options to a writer with an external schema.
 pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opts: Options, comptime schema: anytype) !void {
-    var ser = Serializer.init(writer, opts);
-    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema);
+    var ser = Serializer(.{}).init(writer, opts);
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
 }
 
 /// Deserialize a value of type T from a JSON byte slice with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.init(input);
-    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -83,7 +85,7 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
 /// Deserialize with zero-copy string borrowing and an external schema.
 pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.initBorrowed(input);
-    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -106,7 +108,7 @@ pub fn toPrettyWriter(writer: *std.io.Writer, value: anytype, opts: PrettyOption
 /// Allocates copies of all strings. Use an ArenaAllocator for easy bulk cleanup.
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.init(input);
-    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -117,7 +119,7 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 /// Still requires an allocator for structs, slices, and other heap-allocated structures.
 pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.initBorrowed(input);
-    const result = try core_deserialize.deserialize(T, allocator, &deser);
+    const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
     try checkTrailingData(&deser);
     return result;
 }
@@ -158,6 +160,46 @@ pub fn toValue(allocator: std.mem.Allocator, value: anytype) !CoreValue {
 /// Convert a dynamic Value back to a typed Zig value.
 pub fn fromValue(comptime T: type, allocator: std.mem.Allocator, value: CoreValue) !T {
     return value.toType(T, allocator);
+}
+
+// Out-of-band (OOB) customization API.
+
+/// Serialize a value to a JSON byte slice with out-of-band type overrides.
+/// Map is a tuple of `.{ .{ Type, Adapter }, ... }`.
+pub fn toSliceWithMap(allocator: std.mem.Allocator, value: anytype, comptime map: anytype) ![]u8 {
+    var aw: std.io.Writer.Allocating = .init(allocator);
+    var ser = Serializer(map).init(&aw.writer, .{});
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, {}, map);
+    return aw.toOwnedSlice();
+}
+
+/// Serialize a value to a writer in JSON format with out-of-band type overrides.
+pub fn toWriterWithMap(writer: *std.io.Writer, value: anytype, comptime map: anytype) !void {
+    var ser = Serializer(map).init(writer, .{});
+    try core_serialize.serializeSchema(@TypeOf(value), value, &ser, {}, map);
+}
+
+/// Deserialize a value of type T from a JSON byte slice with out-of-band type overrides.
+pub fn fromSliceWithMap(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime map: anytype) !T {
+    var deser = Deserializer.init(input);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, {}, map);
+    try checkTrailingData(&deser);
+    return result;
+}
+
+/// Deserialize with zero-copy string borrowing and out-of-band type overrides.
+pub fn fromSliceBorrowedWithMap(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime map: anytype) !T {
+    var deser = Deserializer.initBorrowed(input);
+    const result = try core_deserialize.deserializeSchema(T, allocator, &deser, {}, map);
+    try checkTrailingData(&deser);
+    return result;
+}
+
+/// Deserialize from a reader with out-of-band type overrides.
+pub fn fromReaderWithMap(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime map: anytype) !T {
+    const buf = try readAll(allocator, reader);
+    defer allocator.free(buf);
+    return fromSliceWithMap(T, allocator, buf, map);
 }
 
 // Tests.
@@ -815,7 +857,7 @@ test "serialize skip if null" {
         email: ?[]const u8,
 
         pub const serde = .{
-            .skip = .{ .email = serde_opts.SkipMode.@"null" },
+            .skip = .{ .email = serde_opts.SkipMode.null },
         };
     };
 
@@ -1011,7 +1053,7 @@ test "struct with combined serde options" {
             .rename_all = serde_opts.NamingConvention.camel_case,
             .skip = .{
                 .secret_key = serde_opts.SkipMode.always,
-                .opt_note = serde_opts.SkipMode.@"null",
+                .opt_note = serde_opts.SkipMode.null,
             },
         };
     };
@@ -1203,4 +1245,83 @@ test "schema: zerdeSerialize bypasses schema" {
 
     const result = try fromSliceSchema(Custom, arena.allocator(), bytes, schema);
     try testing.expectEqual(@as(u64, 12345), result.inner);
+}
+
+// Out-of-band (OOB) customization tests.
+
+test "OOB: struct containing overridden type serialization" {
+    const Inner = struct { val: u32 };
+    const Outer = struct { name: []const u8, data: Inner };
+
+    const InnerAdapter = struct {
+        pub fn serialize(value: Inner, s: anytype) @TypeOf(s.*).Error!void {
+            try s.serializeInt(value.val);
+        }
+    };
+
+    const map = .{.{ Inner, InnerAdapter }};
+
+    const original = Outer{ .name = "test", .data = .{ .val = 99 } };
+    const bytes = try toSliceWithMap(testing.allocator, original, map);
+    defer testing.allocator.free(bytes);
+
+    // Inner should be serialized as int (via adapter), not as struct.
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"data\":99") != null);
+    try testing.expect(std.mem.indexOf(u8, bytes, "\"val\"") == null);
+}
+
+test "OOB: top-level type override" {
+    const Wrapper = struct { inner: u64 };
+
+    const WrapperAdapter = struct {
+        pub fn serialize(value: Wrapper, s: anytype) @TypeOf(s.*).Error!void {
+            var buf: [30]u8 = undefined;
+            const str = std.fmt.bufPrint(&buf, "wrapped:{d}", .{value.inner}) catch unreachable;
+            try s.serializeString(str);
+        }
+        pub fn deserialize(comptime _: type, alloc: std.mem.Allocator, d: anytype) @TypeOf(d.*).Error!Wrapper {
+            const str = try d.deserializeString(alloc);
+            defer alloc.free(str);
+            const num_str = if (std.mem.indexOf(u8, str, ":")) |i| str[i + 1 ..] else str;
+            const val = std.fmt.parseInt(u64, num_str, 10) catch return error.InvalidNumber;
+            return .{ .inner = val };
+        }
+    };
+
+    const map = .{.{ Wrapper, WrapperAdapter }};
+
+    const original = Wrapper{ .inner = 42 };
+    const bytes = try toSliceWithMap(testing.allocator, original, map);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("\"wrapped:42\"", bytes);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try fromSliceWithMap(Wrapper, arena.allocator(), bytes, map);
+    try testing.expectEqual(@as(u64, 42), result.inner);
+}
+
+test "OOB: no match falls through to default behavior" {
+    const Point = struct { x: i32, y: i32 };
+    const Unrelated = struct { z: u32 };
+
+    const UnrelatedAdapter = struct {
+        pub fn serialize(_: Unrelated, _: anytype) !void {}
+        pub fn deserialize(comptime _: type, _: std.mem.Allocator, _: anytype) !Unrelated {
+            return .{ .z = 0 };
+        }
+    };
+
+    // Map has Unrelated, not Point — Point should serialize normally.
+    const map = .{.{ Unrelated, UnrelatedAdapter }};
+
+    const bytes = try toSliceWithMap(testing.allocator, Point{ .x = 1, .y = 2 }, map);
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("{\"x\":1,\"y\":2}", bytes);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try fromSliceWithMap(Point, arena.allocator(), bytes, map);
+    try testing.expectEqual(@as(i32, 1), result.x);
+    try testing.expectEqual(@as(i32, 2), result.y);
 }

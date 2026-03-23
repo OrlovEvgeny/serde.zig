@@ -1,5 +1,4 @@
 /// Comptime verification of Serializer and Deserializer interfaces.
-
 /// Whether S implements the full Serializer interface.
 pub fn isSerializer(comptime S: type) bool {
     return @hasDecl(S, "serializeBool") and

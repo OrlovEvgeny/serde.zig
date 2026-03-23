@@ -128,7 +128,7 @@ pub const StructSerializer = struct {
             .allocator = self.allocator,
             .path = self.path,
         };
-        try core_serialize.serialize(T, value, &child);
+        try core_serialize.serialize(T, value, &child, .{});
         self.out.writeByte('\n') catch return error.WriteFailed;
     }
 
@@ -180,7 +180,7 @@ pub const StructSerializer = struct {
             .allocator = self.allocator,
             .path = new_path,
         };
-        core_serialize.serialize(@TypeOf(value), value, &child_ser) catch {
+        core_serialize.serialize(@TypeOf(value), value, &child_ser, .{}) catch {
             self.allocator.free(new_path);
             aw.deinit();
             return error.WriteFailed;
@@ -220,7 +220,7 @@ pub const StructSerializer = struct {
                 .path = new_path,
             };
             const ElemType = @TypeOf(elem);
-            core_serialize.serialize(ElemType, elem, &child_ser) catch {
+            core_serialize.serialize(ElemType, elem, &child_ser, .{}) catch {
                 self.allocator.free(new_path);
                 aw.deinit();
                 return error.WriteFailed;
@@ -390,7 +390,7 @@ const testing = std.testing;
 fn serializeToString(value: anytype) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, testing.allocator);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 

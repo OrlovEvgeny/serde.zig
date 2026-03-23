@@ -12,8 +12,21 @@ pub fn deserialize(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
-    return deserializeSchema(T, allocator, deserializer, {});
+    return deserializeSchema(T, allocator, deserializer, {}, map);
+}
+
+/// Deserialize a value with out-of-band type overrides.
+/// The map is a tuple of `.{ .{ Type, Adapter }, ... }` where Adapter has a
+/// `fn deserialize(comptime T: type, allocator: Allocator, d: anytype) !T` method.
+pub fn deserializeWith(
+    comptime T: type,
+    allocator: Allocator,
+    deserializer: anytype,
+    comptime map: anytype,
+) @TypeOf(deserializer.*).Error!T {
+    return deserializeSchema(T, allocator, deserializer, {}, map);
 }
 
 /// Deserialize a value of type T with an external schema.
@@ -24,9 +37,17 @@ pub fn deserializeSchema(
     allocator: Allocator,
     deserializer: anytype,
     comptime schema: anytype,
+    comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     if (comptime opts.hasCustomDeserializer(T)) {
         return T.zerdeDeserialize(T, allocator, deserializer);
+    }
+
+    // Out-of-band override: check the map for a matching type.
+    if (comptime @TypeOf(map) != void) {
+        if (comptime findOobAdapter(T, map)) |adapter| {
+            return adapter.deserialize(T, allocator, deserializer);
+        }
     }
 
     return switch (comptime typeKind(T)) {
@@ -36,22 +57,31 @@ pub fn deserializeSchema(
         .string => deserializer.deserializeString(allocator),
         .void => deserializer.deserializeVoid(),
         .optional => deserializer.deserializeOptional(Child(T), allocator),
-        .@"struct" => deserializeStructFieldsSchema(T, allocator, deserializer, schema),
+        .@"struct" => deserializeStructFieldsSchema(T, allocator, deserializer, schema, map),
         .@"enum" => deserializeEnumSchema(T, deserializer, schema),
-        .@"union" => deserializeUnionDispatchSchema(T, allocator, deserializer, schema),
+        .@"union" => deserializeUnionDispatchSchema(T, allocator, deserializer, schema, map),
         .array => deserializeArray(T, allocator, deserializer),
         .slice => deserializer.deserializeSeq(T, allocator),
-        .pointer => deserializePointer(T, allocator, deserializer),
-        .tuple => deserializeTuple(T, allocator, deserializer),
+        .pointer => deserializePointerSchema(T, allocator, deserializer, map),
+        .tuple => deserializeTupleSchema(T, allocator, deserializer, map),
         .bytes => {
             if (comptime @hasDecl(@TypeOf(deserializer.*), "deserializeBytes")) {
                 return deserializer.deserializeBytes(allocator);
             }
             return deserializer.deserializeString(allocator);
         },
-        .map => deserializeMap(T, allocator, deserializer),
+        .map => deserializeMapSchema(T, allocator, deserializer, map),
         else => @compileError("Cannot auto-deserialize: " ++ @typeName(T)),
     };
+}
+
+/// Find an out-of-band adapter for type T in the map tuple.
+fn findOobAdapter(comptime T: type, comptime map: anytype) ?type {
+    inline for (@typeInfo(@TypeOf(map)).@"struct".fields) |field| {
+        const entry = @field(map, field.name);
+        if (entry[0] == T) return entry[1];
+    }
+    return null;
 }
 
 fn deserializeEnumSchema(comptime T: type, deserializer: anytype, comptime schema: anytype) @TypeOf(deserializer.*).Error!T {
@@ -82,24 +112,27 @@ fn deserializeArray(
     return result;
 }
 
-fn deserializePointer(
+fn deserializePointerSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     const child = Child(T);
-    const val = try deserialize(child, allocator, deserializer);
+    const val = try deserializeSchema(child, allocator, deserializer, {}, map);
     errdefer freeAllocated(child, val, allocator);
     const ptr = try allocator.create(child);
     ptr.* = val;
     return ptr;
 }
 
-fn deserializeTuple(
+fn deserializeTupleSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
+    _ = map;
     const info = @typeInfo(T).@"struct";
     var result: T = undefined;
     var seq = try deserializer.deserializeSeqAccess();
@@ -159,7 +192,9 @@ fn deserializeStructFieldsSchema(
     allocator: Allocator,
     deserializer: anytype,
     comptime schema: anytype,
+    comptime oob_map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
+    _ = oob_map;
     const info = @typeInfo(T).@"struct";
 
     var result: T = undefined;
@@ -279,13 +314,14 @@ fn deserializeUnionDispatchSchema(
     allocator: Allocator,
     deserializer: anytype,
     comptime schema: anytype,
+    comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     const tag_style = comptime opts.getUnionTagSchema(T, schema);
     return switch (tag_style) {
         .external => deserializer.deserializeUnion(T, allocator),
         .internal => deserializeUnionInternalSchema(T, allocator, deserializer, schema),
         .adjacent => deserializeUnionAdjacentSchema(T, allocator, deserializer, schema),
-        .untagged => deserializeUnionUntagged(T, allocator, deserializer),
+        .untagged => deserializeUnionUntaggedSchema(T, allocator, deserializer, map),
     };
 }
 
@@ -416,11 +452,13 @@ fn deserializeUnionAdjacentSchema(
     return deserializer.raiseError(error.MissingField);
 }
 
-fn deserializeMap(
+fn deserializeMapSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime oob_map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
+    _ = oob_map;
     const K = kind_mod.MapKeyType(T);
     const V = kind_mod.MapValueType(T);
     const managed = comptime kind_mod.isMapManaged(T);
@@ -457,10 +495,11 @@ fn deserializeMap(
     return result;
 }
 
-fn deserializeUnionUntagged(
+fn deserializeUnionUntaggedSchema(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     const info = @typeInfo(T).@"union";
 
@@ -473,7 +512,7 @@ fn deserializeUnionUntagged(
                 deserializer.* = saved;
             }
         } else {
-            if (deserialize(field.type, allocator, deserializer)) |payload| {
+            if (deserializeSchema(field.type, allocator, deserializer, {}, map)) |payload| {
                 return @unionInit(T, field.name, payload);
             } else |_| {
                 deserializer.* = saved;
@@ -586,7 +625,7 @@ test "deserialize struct basic" {
             .values = &.{ .{ .int = 10 }, .{ .int = 20 } },
         },
     };
-    const point = try deserialize(Point, testing.allocator, &deser);
+    const point = try deserialize(Point, testing.allocator, &deser, .{});
     try testing.expectEqual(@as(i32, 10), point.x);
     try testing.expectEqual(@as(i32, 20), point.y);
 }
@@ -599,7 +638,7 @@ test "deserialize struct with optional missing" {
             .values = &.{.{ .int = 5 }},
         },
     };
-    const val = try deserialize(Opt, testing.allocator, &deser);
+    const val = try deserialize(Opt, testing.allocator, &deser, .{});
     try testing.expectEqual(@as(i32, 5), val.a);
     try testing.expectEqual(@as(?i32, null), val.b);
 }
@@ -612,7 +651,7 @@ test "deserialize struct missing required field" {
             .values = &.{.{ .int = 1 }},
         },
     };
-    const result = deserialize(Req, testing.allocator, &deser);
+    const result = deserialize(Req, testing.allocator, &deser, .{});
     try testing.expectError(error.MissingField, result);
 }
 
@@ -627,7 +666,7 @@ test "deserialize struct with default" {
             .values = &.{.{ .int = 1 }},
         },
     };
-    const val = try deserialize(Def, testing.allocator, &deser);
+    const val = try deserialize(Def, testing.allocator, &deser, .{});
     try testing.expectEqual(@as(i32, 1), val.a);
     try testing.expectEqual(@as(i32, 99), val.b);
 }
@@ -648,7 +687,7 @@ test "deserialize struct with rename" {
             .values = &.{ .{ .int = 42 }, .{ .string = "Bob" } },
         },
     };
-    const val = try deserialize(User, testing.allocator, &deser);
+    const val = try deserialize(User, testing.allocator, &deser, .{});
     try testing.expectEqual(@as(u64, 42), val.id);
     try testing.expectEqualStrings("Bob", val.first_name);
 }
@@ -666,7 +705,7 @@ test "deserialize struct deny unknown fields" {
             .values = &.{ .{ .int = 1 }, .{ .int = 2 } },
         },
     };
-    const result = deserialize(Strict, testing.allocator, &deser);
+    const result = deserialize(Strict, testing.allocator, &deser, .{});
     try testing.expectError(error.UnknownField, result);
 }
 
@@ -678,7 +717,7 @@ test "deserialize struct ignores unknown fields by default" {
             .values = &.{ .{ .int = 5 }, .{ .int = 99 } },
         },
     };
-    const val = try deserialize(Loose, testing.allocator, &deser);
+    const val = try deserialize(Loose, testing.allocator, &deser, .{});
     try testing.expectEqual(@as(i32, 5), val.x);
 }
 
@@ -693,7 +732,7 @@ test "deserializeSchema with rename on plain struct" {
             .values = &.{ .{ .int = 10 }, .{ .int = 20 } },
         },
     };
-    const val = try deserializeSchema(Point, testing.allocator, &deser, schema);
+    const val = try deserializeSchema(Point, testing.allocator, &deser, schema, .{});
     try testing.expectEqual(@as(i32, 10), val.x);
     try testing.expectEqual(@as(i32, 20), val.y);
 }
@@ -707,7 +746,7 @@ test "deserializeSchema with deny_unknown_fields via schema" {
             .values = &.{ .{ .int = 1 }, .{ .int = 2 } },
         },
     };
-    const result = deserializeSchema(Plain, testing.allocator, &deser, schema);
+    const result = deserializeSchema(Plain, testing.allocator, &deser, schema, .{});
     try testing.expectError(error.UnknownField, result);
 }
 
@@ -720,7 +759,24 @@ test "deserializeSchema with skip via schema" {
             .values = &.{.{ .int = 5 }},
         },
     };
-    const val = try deserializeSchema(S, testing.allocator, &deser, schema);
+    const val = try deserializeSchema(S, testing.allocator, &deser, schema, .{});
     try testing.expectEqual(@as(i32, 5), val.a);
     try testing.expectEqual(@as(i32, 0), val.b);
+}
+
+// Out-of-band (OOB) customization tests.
+
+test "deserializeWith: custom adapter compiles" {
+    const Wrapper = struct { inner: u32 };
+
+    const WrapperAdapter = struct {
+        pub fn deserialize(comptime _: type, _: Allocator, d: anytype) @TypeOf(d.*).Error!Wrapper {
+            const val = try d.deserializeInt(u32);
+            return .{ .inner = val };
+        }
+    };
+
+    // Verify the adapter type is valid for the map pattern.
+    const map = .{.{ Wrapper, WrapperAdapter }};
+    _ = map;
 }

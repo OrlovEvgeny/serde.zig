@@ -90,7 +90,10 @@ pub const Scanner = struct {
                 return switch (ctx) {
                     .mapping => .mapping_end,
                     .sequence => .sequence_end,
-                    .none => { self.done = true; return .stream_end; },
+                    .none => {
+                        self.done = true;
+                        return .stream_end;
+                    },
                 };
             }
             self.done = true;
@@ -250,7 +253,7 @@ pub const Scanner = struct {
             // Stop at ': ' or ':\n' or ':\r'.
             if (ch == ':' and self.pos + 1 < self.input.len and
                 (self.input[self.pos + 1] == ' ' or self.input[self.pos + 1] == '\n' or
-                self.input[self.pos + 1] == '\r' or self.input[self.pos + 1] == '\t'))
+                    self.input[self.pos + 1] == '\r' or self.input[self.pos + 1] == '\t'))
                 break;
 
             // Colon at end of input.

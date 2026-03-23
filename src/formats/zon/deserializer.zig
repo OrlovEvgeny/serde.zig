@@ -103,7 +103,7 @@ pub const Deserializer = struct {
             self.pos += 4;
             return null;
         }
-        return try core_deserialize.deserialize(T, allocator, self);
+        return try core_deserialize.deserialize(T, allocator, self, .{});
     }
 
     pub fn deserializeEnum(self: *Deserializer, comptime T: type) Error!T {
@@ -171,7 +171,7 @@ pub const Deserializer = struct {
                 self.pos += 1;
                 break;
             }
-            const elem = try core_deserialize.deserialize(Child, allocator, self);
+            const elem = try core_deserialize.deserialize(Child, allocator, self, .{});
             items.append(allocator, elem) catch return error.OutOfMemory;
             self.skipWhitespace();
             if (self.pos < self.input.len and self.input[self.pos] == ',')
@@ -334,7 +334,7 @@ pub const MapAccess = struct {
     }
 
     pub fn nextValue(self: *MapAccess, comptime T: type, allocator: Allocator) Error!T {
-        const result = try core_deserialize.deserialize(T, allocator, self.parent);
+        const result = try core_deserialize.deserialize(T, allocator, self.parent, .{});
         self.parent.skipWhitespace();
         // Consume trailing comma.
         if (self.parent.pos < self.parent.input.len and self.parent.input[self.parent.pos] == ',')
@@ -366,7 +366,7 @@ pub const SeqAccess = struct {
             self.parent.pos += 1;
             return null;
         }
-        const result = try core_deserialize.deserialize(T, allocator, self.parent);
+        const result = try core_deserialize.deserialize(T, allocator, self.parent, .{});
         self.parent.skipWhitespace();
         if (self.parent.pos < self.parent.input.len and self.parent.input[self.parent.pos] == ',')
             self.parent.pos += 1;
@@ -511,7 +511,7 @@ test "deserialize enum quoted string" {
 test "deserialize struct" {
     const Point = struct { x: i32, y: i32 };
     var d = Deserializer.init(".{ .x = 1, .y = 2 }");
-    const point = try core_deserialize.deserialize(Point, testing.allocator, &d);
+    const point = try core_deserialize.deserialize(Point, testing.allocator, &d, .{});
     try testing.expectEqual(@as(i32, 1), point.x);
     try testing.expectEqual(@as(i32, 2), point.y);
 }
@@ -519,7 +519,7 @@ test "deserialize struct" {
 test "deserialize struct compact" {
     const Point = struct { x: i32, y: i32 };
     var d = Deserializer.init(".{.x = 1,.y = 2}");
-    const point = try core_deserialize.deserialize(Point, testing.allocator, &d);
+    const point = try core_deserialize.deserialize(Point, testing.allocator, &d, .{});
     try testing.expectEqual(@as(i32, 1), point.x);
     try testing.expectEqual(@as(i32, 2), point.y);
 }
@@ -530,7 +530,7 @@ test "deserialize nested struct" {
     var d = Deserializer.init(".{.name = \"test\",.inner = .{.val = 42}}");
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const val = try core_deserialize.deserialize(Outer, arena.allocator(), &d);
+    const val = try core_deserialize.deserialize(Outer, arena.allocator(), &d, .{});
     try testing.expectEqualStrings("test", val.name);
     try testing.expectEqual(@as(i32, 42), val.inner.val);
 }
@@ -555,7 +555,7 @@ test "deserialize empty slice" {
 test "deserialize struct with optional missing" {
     const Opt = struct { a: i32, b: ?i32 };
     var d = Deserializer.init(".{.a = 5}");
-    const val = try core_deserialize.deserialize(Opt, testing.allocator, &d);
+    const val = try core_deserialize.deserialize(Opt, testing.allocator, &d, .{});
     try testing.expectEqual(@as(i32, 5), val.a);
     try testing.expectEqual(@as(?i32, null), val.b);
 }

@@ -116,16 +116,16 @@ pub const StructSerializer = struct {
         self.parent.out.writeByte('.') catch return error.WriteFailed;
         self.parent.out.writeAll(key) catch return error.WriteFailed;
         self.parent.out.writeAll(" = ") catch return error.WriteFailed;
-        try core_serialize.serialize(@TypeOf(value), value, self.parent);
+        try core_serialize.serialize(@TypeOf(value), value, self.parent, .{});
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
         try self.parent.writeComma();
         try self.parent.writeIndent();
         self.parent.out.writeByte('.') catch return error.WriteFailed;
-        try core_serialize.serialize(@TypeOf(key), key, self.parent);
+        try core_serialize.serialize(@TypeOf(key), key, self.parent, .{});
         self.parent.out.writeAll(" = ") catch return error.WriteFailed;
-        try core_serialize.serialize(@TypeOf(value), value, self.parent);
+        try core_serialize.serialize(@TypeOf(value), value, self.parent, .{});
     }
 
     pub fn end(self: *StructSerializer) Error!void {
@@ -213,7 +213,7 @@ const testing = std.testing;
 fn serializeToString(value: anytype, opts: Options) ![]u8 {
     var aw: std.io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, opts);
-    try core_serialize.serialize(@TypeOf(value), value, &ser);
+    try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 

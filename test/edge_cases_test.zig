@@ -2,7 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const sz = @import("serde");
 
-
 test "edge: empty string roundtrip JSON" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -52,7 +51,6 @@ test "edge: control chars in string JSON" {
     const r = try sz.json.fromSlice(S, arena.allocator(), bytes);
     try testing.expectEqualSlices(u8, v.s, r.s);
 }
-
 
 test "edge: i8 min/max JSON" {
     const vals = [_]i8{ std.math.minInt(i8), std.math.maxInt(i8), 0, -1, 1 };
