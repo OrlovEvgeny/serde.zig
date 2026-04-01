@@ -329,6 +329,103 @@ const User = struct {
 
 Available conventions: `.camel_case`, `.snake_case`, `.pascal_case`, `.kebab_case`, `.SCREAMING_SNAKE_CASE`.
 
+### Asymmetric renaming
+
+Use different names for serialization and deserialization. This is essential for API evolution, rolling upgrades, and interoperating with systems that use different naming conventions for input vs output.
+
+```zig
+const User = struct {
+    user_id: u64,
+    first_name: []const u8,
+
+    pub const serde = .{
+        // Serialize as "id", but accept "user_id" on input
+        .rename_serialize = .{ .user_id = "id" },
+        // Different case conventions per direction
+        .rename_all_serialize = serde.NamingConvention.camel_case,
+        .rename_all_deserialize = serde.NamingConvention.snake_case,
+    };
+};
+
+// Serializes as: {"id":42,"firstName":"Alice"}
+// Deserializes from: {"user_id":42,"first_name":"Alice"}
+```
+
+Direction-specific options (`rename_serialize`, `rename_deserialize`, `rename_all_serialize`, `rename_all_deserialize`) take priority over their symmetric counterparts (`rename`, `rename_all`).
+
+### Field aliases
+
+Accept multiple input names for a single field during deserialization. Aliases do not affect serialization output. Useful for backward compatibility when field names change across API versions.
+
+```zig
+const Config = struct {
+    endpoint: []const u8,
+
+    pub const serde = .{
+        .alias = .{ .endpoint = &.{ "url", "uri", "addr" } },
+    };
+};
+
+// All of these deserialize into .endpoint:
+// {"endpoint": "..."}, {"url": "..."}, {"uri": "..."}, {"addr": "..."}
+// Serializes as: {"endpoint": "..."}
+```
+
+Aliases work together with rename and rename_all:
+
+```zig
+const User = struct {
+    user_id: u64,
+
+    pub const serde = .{
+        .rename = .{ .user_id = "id" },
+        .alias = .{ .user_id = &.{ "user_id", "userId", "uid" } },
+    };
+};
+
+// Primary name: "id" (from rename)
+// Also accepts: "user_id", "userId", "uid" (from alias)
+// Serializes as: {"id": 42}
+```
+
+### Enum and union variant renaming
+
+Rename and alias options also apply to enum values and union variant tags:
+
+```zig
+const Status = enum {
+    active,
+    inactive,
+    in_review,
+
+    pub const serde = .{
+        .rename_all_serialize = serde.NamingConvention.SCREAMING_SNAKE_CASE,
+        .rename_all_deserialize = serde.NamingConvention.SCREAMING_SNAKE_CASE,
+        .alias = .{ .in_review = &.{ "in_review", "pending_review" } },
+    };
+};
+
+// Serializes as: "IN_REVIEW"
+// Accepts: "IN_REVIEW", "in_review", "pending_review"
+```
+
+```zig
+const Command = union(enum) {
+    ping: void,
+    execute: struct { query: []const u8 },
+
+    pub const serde = .{
+        .tag = serde.UnionTag.internal,
+        .tag_field = "type",
+        .rename = .{ .execute = "exec" },
+        .alias = .{ .execute = &.{ "execute", "run" } },
+    };
+};
+
+// Serializes as: {"type":"exec","query":"SELECT 1"}
+// Accepts: "exec", "execute", "run" as variant tag values
+```
+
 ### Skip fields
 
 ```zig
@@ -489,7 +586,7 @@ const compact = try serde.json.toSliceSchema(allocator, point, compact_schema);
 // => {"a":1.0e0,"b":2.0e0}
 ```
 
-Schema supports all the same options as `pub const serde`: `rename`, `rename_all`, `skip`, `default`, `with`, `deny_unknown_fields`, `flatten`, `tag`, `tag_field`, `content_field`, `enum_repr`.
+Schema supports all the same options as `pub const serde`: `rename`, `rename_all`, `rename_serialize`, `rename_deserialize`, `rename_all_serialize`, `rename_all_deserialize`, `alias`, `skip`, `default`, `with`, `deny_unknown_fields`, `flatten`, `tag`, `tag_field`, `content_field`, `enum_repr`.
 
 When both an external schema and `pub const serde` exist on a type, the external schema takes priority.
 

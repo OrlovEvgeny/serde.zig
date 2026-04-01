@@ -44,8 +44,6 @@ pub fn toSliceAlloc(allocator: std.mem.Allocator, value: anytype) ![:0]u8 {
     return result;
 }
 
-// Schema-aware API.
-
 /// Serialize with an external schema.
 pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
     return toSliceWithSchema(allocator, value, .{}, schema);
@@ -92,8 +90,6 @@ pub fn fromFilePath(comptime T: type, allocator: std.mem.Allocator, path: []cons
     var reader = file.reader().any();
     return fromReader(T, allocator, &reader);
 }
-
-// Schema-aware deserialization.
 
 /// Deserialize with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
@@ -162,7 +158,7 @@ fn writeStructElement(
         if (comptime opt.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
         if (comptime isXmlAttribute(T, field.name, schema)) {
             writer.writeByte(' ') catch return error.WriteFailed;
-            const wire_name = comptime opt.wireFieldNameSchema(T, field.name, schema);
+            const wire_name = comptime opt.wireFieldNameForDir(T, field.name, schema, .serialize);
             writer.writeAll(wire_name) catch return error.WriteFailed;
             writer.writeByte('=') catch return error.WriteFailed;
             // Write attribute value.
@@ -189,13 +185,13 @@ fn writeStructElement(
             const nested = @field(value, field.name);
             const nested_info = @typeInfo(field.type).@"struct";
             inline for (nested_info.fields) |sf| {
-                const nested_wire = comptime opt.wireFieldName(field.type, sf.name);
+                const nested_wire = comptime opt.wireFieldNameForDir(field.type, sf.name, {}, .serialize);
                 try ss.serializeField(nested_wire, @field(nested, sf.name));
             }
             continue;
         }
 
-        const wire_name = comptime opt.wireFieldNameSchema(T, field.name, schema);
+        const wire_name = comptime opt.wireFieldNameForDir(T, field.name, schema, .serialize);
         const field_value = @field(value, field.name);
 
         const skip_null = comptime opt.isSkipIfNullSchema(T, field.name, schema) and @typeInfo(field.type) == .optional;
@@ -373,7 +369,7 @@ fn readAll(allocator: std.mem.Allocator, reader: *std.io.Reader) ![]u8 {
     return buf.toOwnedSlice(allocator) catch return error.OutOfMemory;
 }
 
-// Tests.
+
 
 const testing = std.testing;
 
