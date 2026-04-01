@@ -6,7 +6,6 @@ const Kind = kind_mod.Kind;
 const Child = kind_mod.Child;
 const typeKind = kind_mod.typeKind;
 
-/// Serialize any value using a format-specific serializer.
 pub fn serialize(
     comptime T: type,
     value: T,
@@ -16,9 +15,8 @@ pub fn serialize(
     return serializeSchema(T, value, serializer, {}, map);
 }
 
-/// Serialize any value with out-of-band type overrides.
-/// The map is a tuple of `.{ .{ Type, Adapter }, ... }` where Adapter has a
-/// `fn serialize(value: T, s: anytype) !void` method.
+/// Serialize with out-of-band type overrides.
+/// Map: `.{ .{ Type, Adapter }, ... }` where Adapter has `fn serialize(value, s) !void`.
 pub fn serializeWith(
     comptime T: type,
     value: T,
@@ -28,9 +26,8 @@ pub fn serializeWith(
     return serializeSchema(T, value, serializer, {}, map);
 }
 
-/// Serialize any value using a format-specific serializer with an external schema.
-/// Schema fields (rename, skip, with, etc.) override T.serde declarations.
-/// Types with zerdeSerialize bypass the schema entirely.
+/// Serialize with an external schema. Schema overrides T.serde.
+/// Types with zerdeSerialize bypass the schema.
 pub fn serializeSchema(
     comptime T: type,
     value: T,
@@ -42,7 +39,6 @@ pub fn serializeSchema(
         return value.zerdeSerialize(serializer);
     }
 
-    // Out-of-band override: check the map for a matching type.
     if (comptime @TypeOf(map) != void) {
         if (comptime findOobAdapter(T, map)) |adapter| {
             return adapter.serialize(value, serializer);
@@ -74,8 +70,6 @@ pub fn serializeSchema(
     }
 }
 
-/// Find an out-of-band adapter for type T in the map tuple.
-/// Map entries are `.{ Type, AdapterModule }`.
 fn findOobAdapter(comptime T: type, comptime map: anytype) ?type {
     inline for (@typeInfo(@TypeOf(map)).@"struct".fields) |field| {
         const entry = @field(map, field.name);
@@ -119,20 +113,19 @@ fn serializeStructSchema(comptime T: type, value: T, serializer: anytype, compti
     inline for (info.fields) |field| {
         if (comptime options.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
 
-        // Flattened fields: inline the sub-struct's fields at the parent level.
         if (comptime options.isFlattenedFieldSchema(T, field.name, schema)) {
             if (@typeInfo(field.type) != .@"struct")
                 @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
             const nested = @field(value, field.name);
             const nested_info = @typeInfo(field.type).@"struct";
             inline for (nested_info.fields) |sf| {
-                const nested_wire = comptime options.wireFieldName(field.type, sf.name);
+                const nested_wire = comptime options.wireFieldNameForDir(field.type, sf.name, {}, .serialize);
                 try ss.serializeField(nested_wire, @field(nested, sf.name));
             }
             continue;
         }
 
-        const wire_name = comptime options.wireFieldNameSchema(T, field.name, schema);
+        const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
         const field_value = @field(value, field.name);
 
         const skip_null = comptime options.isSkipIfNullSchema(T, field.name, schema) and @typeInfo(field.type) == .optional;
@@ -166,7 +159,7 @@ fn serializeTupleSchema(comptime T: type, value: T, serializer: anytype, comptim
 fn serializeUnionSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const tag_style = comptime options.getUnionTagSchema(T, schema);
     if (tag_style == .external) {
-        return serializeUnionExternalSchema(T, value, serializer, map);
+        return serializeUnionExternalSchema(T, value, serializer, schema, map);
     } else if (tag_style == .internal) {
         return serializeUnionInternalSchema(T, value, serializer, schema);
     } else if (tag_style == .adjacent) {
@@ -176,17 +169,18 @@ fn serializeUnionSchema(comptime T: type, value: T, serializer: anytype, comptim
     }
 }
 
-fn serializeUnionExternalSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeUnionExternalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     _ = map;
     const info = @typeInfo(T).@"union";
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
+            const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
             if (field.type == void) {
-                return serializer.serializeString(field.name);
+                return serializer.serializeString(wire_name);
             } else {
                 const payload = @field(value, field.name);
                 var ss = try serializer.beginStruct();
-                try ss.serializeField(field.name, payload);
+                try ss.serializeField(wire_name, payload);
                 return ss.end();
             }
         }
@@ -198,8 +192,9 @@ fn serializeUnionInternalSchema(comptime T: type, value: T, serializer: anytype,
     const tag_field_name = comptime options.getTagFieldSchema(T, schema);
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
+            const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
             var ss = try serializer.beginStruct();
-            try ss.serializeField(tag_field_name, @as([]const u8, field.name));
+            try ss.serializeField(tag_field_name, @as([]const u8, wire_name));
             if (field.type == void) {
                 return ss.end();
             } else {
@@ -222,8 +217,9 @@ fn serializeUnionAdjacentSchema(comptime T: type, value: T, serializer: anytype,
     const content_field_name = comptime options.getContentFieldSchema(T, schema);
     inline for (info.fields) |field| {
         if (value == @field(T, field.name)) {
+            const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
             var ss = try serializer.beginStruct();
-            try ss.serializeField(tag_field_name, @as([]const u8, field.name));
+            try ss.serializeField(tag_field_name, @as([]const u8, wire_name));
             if (field.type != void) {
                 const payload = @field(value, field.name);
                 try ss.serializeField(content_field_name, payload);
@@ -252,7 +248,13 @@ fn serializeEnumSchema(comptime T: type, value: T, serializer: anytype, comptime
         const tag_type = @typeInfo(T).@"enum".tag_type;
         return serializer.serializeInt(@as(tag_type, @intFromEnum(value)));
     }
-    return serializer.serializeString(@tagName(value));
+    inline for (@typeInfo(T).@"enum".fields) |field| {
+        if (@intFromEnum(value) == field.value) {
+            const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
+            return serializer.serializeString(wire_name);
+        }
+    }
+    unreachable;
 }
 
 fn serializeMapSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
@@ -264,8 +266,6 @@ fn serializeMapSchema(comptime T: type, value: T, serializer: anytype, comptime 
     }
     return ss.end();
 }
-
-// Tests using a mock serializer.
 
 const testing = std.testing;
 
@@ -600,8 +600,6 @@ test "serializeSchema overrides T.serde" {
     try serializeSchema(User, .{ .id = 1, .first_name = "Bob" }, &mock, schema, .{});
     try testing.expectEqualStrings("ID", mock.events.items[1].field);
 }
-
-// Out-of-band (OOB) customization tests.
 
 test "serializeWith: custom adapter for unsupported type" {
     const Wrapper = struct {

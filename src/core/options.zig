@@ -27,7 +27,6 @@ pub const Direction = enum {
     deserialize,
 };
 
-/// Whether a type declares `pub const serde`.
 pub fn hasSerdeOptions(comptime T: type) bool {
     return @hasDecl(T, "serde");
 }
@@ -36,11 +35,8 @@ fn hasFieldOrDecl(comptime S: type, comptime name: []const u8) bool {
     return @hasDecl(S, name) or @hasField(S, name);
 }
 
-// Schema resolution: checks schema first, then falls back to T.serde.
-// When schema is `void` (passed as `{}`), only T.serde is consulted.
+// Priority: schema > T.serde. Void schema ({}) means no schema.
 
-/// Resolve the wire name for a struct field, applying per-field rename
-/// then rename_all convention.
 pub fn wireFieldName(comptime T: type, comptime field_name: []const u8) []const u8 {
     return wireFieldNameSchema(T, field_name, {});
 }
@@ -69,7 +65,97 @@ pub fn wireFieldNameSchema(comptime T: type, comptime field_name: []const u8, co
     return field_name;
 }
 
-/// Whether a field should be completely skipped for the given direction.
+/// Like wireFieldNameSchema, but checks direction-specific options first
+/// (e.g. rename_serialize) before falling through to symmetric ones.
+pub fn wireFieldNameForDir(comptime T: type, comptime field_name: []const u8, comptime schema: anytype, comptime dir: Direction) []const u8 {
+    const dir_rename = if (dir == .serialize) "rename_serialize" else "rename_deserialize";
+    const dir_all = if (dir == .serialize) "rename_all_serialize" else "rename_all_deserialize";
+
+    const S = @TypeOf(schema);
+    if (S != void) {
+        if (@hasField(S, dir_rename)) {
+            const renames = @field(schema, dir_rename);
+            if (@hasField(@TypeOf(renames), field_name))
+                return @field(renames, field_name);
+        }
+        if (@hasField(S, "rename")) {
+            if (@hasField(@TypeOf(schema.rename), field_name))
+                return @field(schema.rename, field_name);
+        }
+        if (@hasField(S, dir_all))
+            return convertCase(field_name, @field(schema, dir_all));
+        if (@hasField(S, "rename_all"))
+            return convertCase(field_name, schema.rename_all);
+    }
+
+    if (hasSerdeOptions(T)) {
+        const o = T.serde;
+        if (hasFieldOrDecl(@TypeOf(o), dir_rename)) {
+            const renames = @field(o, dir_rename);
+            if (@hasField(@TypeOf(renames), field_name))
+                return @field(renames, field_name);
+        }
+        if (hasFieldOrDecl(@TypeOf(o), "rename")) {
+            if (@hasField(@TypeOf(o.rename), field_name))
+                return @field(o.rename, field_name);
+        }
+        if (hasFieldOrDecl(@TypeOf(o), dir_all))
+            return convertCase(field_name, @field(o, dir_all));
+        if (hasFieldOrDecl(@TypeOf(o), "rename_all"))
+            return convertCase(field_name, o.rename_all);
+    }
+
+    return field_name;
+}
+
+pub fn getFieldAliases(comptime T: type, comptime field_name: []const u8, comptime schema: anytype) []const []const u8 {
+    const S = @TypeOf(schema);
+    if (S != void) {
+        if (@hasField(S, "alias")) {
+            if (@hasField(@TypeOf(schema.alias), field_name))
+                return @field(schema.alias, field_name);
+        }
+    }
+    if (hasSerdeOptions(T)) {
+        const o = T.serde;
+        if (hasFieldOrDecl(@TypeOf(o), "alias")) {
+            if (@hasField(@TypeOf(o.alias), field_name))
+                return @field(o.alias, field_name);
+        }
+    }
+    return &.{};
+}
+
+/// True if key equals the deserialized wire name or any alias for this field.
+pub fn matchesDeserializeName(comptime T: type, comptime field_name: []const u8, key: []const u8, comptime schema: anytype) bool {
+    const primary = comptime wireFieldNameForDir(T, field_name, schema, .deserialize);
+    if (std.mem.eql(u8, key, primary)) return true;
+    const aliases = comptime getFieldAliases(T, field_name, schema);
+    inline for (aliases) |a| {
+        if (std.mem.eql(u8, key, a)) return true;
+    }
+    return false;
+}
+
+/// True if any rename or alias option exists on T or the schema.
+pub fn hasNameOverrides(comptime T: type, comptime schema: anytype) bool {
+    const S = @TypeOf(schema);
+    if (S != void) {
+        if (@hasField(S, "rename") or @hasField(S, "rename_serialize") or
+            @hasField(S, "rename_deserialize") or @hasField(S, "rename_all") or
+            @hasField(S, "rename_all_serialize") or @hasField(S, "rename_all_deserialize") or
+            @hasField(S, "alias")) return true;
+    }
+    if (hasSerdeOptions(T)) {
+        const O = @TypeOf(T.serde);
+        if (hasFieldOrDecl(O, "rename") or hasFieldOrDecl(O, "rename_serialize") or
+            hasFieldOrDecl(O, "rename_deserialize") or hasFieldOrDecl(O, "rename_all") or
+            hasFieldOrDecl(O, "rename_all_serialize") or hasFieldOrDecl(O, "rename_all_deserialize") or
+            hasFieldOrDecl(O, "alias")) return true;
+    }
+    return false;
+}
+
 pub fn shouldSkipField(comptime T: type, comptime field_name: []const u8, comptime dir: Direction) bool {
     return shouldSkipFieldSchema(T, field_name, dir, {});
 }
@@ -91,7 +177,6 @@ pub fn shouldSkipFieldSchema(comptime T: type, comptime field_name: []const u8, 
     return @field(skip, field_name) == .always;
 }
 
-/// Whether a field should be skipped during serialization when its value is null.
 pub fn isSkipIfNull(comptime T: type, comptime field_name: []const u8) bool {
     return isSkipIfNullSchema(T, field_name, {});
 }
@@ -113,7 +198,6 @@ pub fn isSkipIfNullSchema(comptime T: type, comptime field_name: []const u8, com
     return @field(skip, field_name) == .null;
 }
 
-/// Whether a field should be skipped when empty.
 pub fn isSkipIfEmpty(comptime T: type, comptime field_name: []const u8) bool {
     return isSkipIfEmptySchema(T, field_name, {});
 }
@@ -135,12 +219,10 @@ pub fn isSkipIfEmptySchema(comptime T: type, comptime field_name: []const u8, co
     return @field(skip, field_name) == .empty;
 }
 
-/// Detect `zerdeSerialize` decl on a type.
 pub fn hasCustomSerializer(comptime T: type) bool {
     return hasDeclSafe(T, "zerdeSerialize");
 }
 
-/// Detect `zerdeDeserialize` decl on a type.
 pub fn hasCustomDeserializer(comptime T: type) bool {
     return hasDeclSafe(T, "zerdeDeserialize");
 }
@@ -152,7 +234,6 @@ fn hasDeclSafe(comptime T: type, comptime name: []const u8) bool {
     };
 }
 
-/// Count non-skipped fields for serialization.
 pub fn countSerializableFields(comptime T: type) usize {
     return countSerializableFieldsSchema(T, {});
 }
@@ -167,7 +248,6 @@ pub fn countSerializableFieldsSchema(comptime T: type, comptime schema: anytype)
     return count;
 }
 
-/// Whether unknown fields trigger an error during deserialization.
 pub fn denyUnknownFields(comptime T: type) bool {
     return denyUnknownFieldsSchema(T, {});
 }
@@ -185,7 +265,6 @@ pub fn denyUnknownFieldsSchema(comptime T: type, comptime schema: anytype) bool 
     return false;
 }
 
-/// Whether a field has a serde default value.
 pub fn hasSerdeDefault(comptime T: type, comptime field_name: []const u8) bool {
     return hasSerdeDefaultSchema(T, field_name, {});
 }
@@ -204,7 +283,6 @@ pub fn hasSerdeDefaultSchema(comptime T: type, comptime field_name: []const u8, 
     return @hasField(@TypeOf(opts.default), field_name);
 }
 
-/// Retrieve the serde default value for a field.
 pub fn getSerdeDefault(comptime T: type, comptime field_name: []const u8) @TypeOf(@field(@as(T, undefined), field_name)) {
     return getSerdeDefaultSchema(T, field_name, {});
 }
@@ -220,7 +298,6 @@ pub fn getSerdeDefaultSchema(comptime T: type, comptime field_name: []const u8, 
     return @field(T.serde.default, field_name);
 }
 
-/// Resolve the enum representation for a type (string or integer).
 pub fn getEnumRepr(comptime T: type) EnumRepr {
     return getEnumReprSchema(T, {});
 }
@@ -238,7 +315,6 @@ pub fn getEnumReprSchema(comptime T: type, comptime schema: anytype) EnumRepr {
     return .string;
 }
 
-/// Resolve the union tag representation.
 pub fn getUnionTag(comptime T: type) UnionTag {
     return getUnionTagSchema(T, {});
 }
@@ -256,7 +332,6 @@ pub fn getUnionTagSchema(comptime T: type, comptime schema: anytype) UnionTag {
     return .external;
 }
 
-/// Get the tag field name for internal/adjacent tagged unions.
 pub fn getTagField(comptime T: type) []const u8 {
     return getTagFieldSchema(T, {});
 }
@@ -275,7 +350,6 @@ pub fn getTagFieldSchema(comptime T: type, comptime schema: anytype) []const u8 
     return "type";
 }
 
-/// Get the content field name for adjacent tagged unions.
 pub fn getContentField(comptime T: type) []const u8 {
     return getContentFieldSchema(T, {});
 }
@@ -294,7 +368,6 @@ pub fn getContentFieldSchema(comptime T: type, comptime schema: anytype) []const
     return "content";
 }
 
-/// Whether a field should be flattened into the parent struct.
 pub fn isFlattenedField(comptime T: type, comptime field_name: []const u8) bool {
     return isFlattenedFieldSchema(T, field_name, {});
 }
@@ -320,7 +393,6 @@ pub fn isFlattenedFieldSchema(comptime T: type, comptime field_name: []const u8,
     return false;
 }
 
-/// Get the list of flattened field names.
 pub fn getFlattenFields(comptime T: type) []const []const u8 {
     return getFlattenFieldsSchema(T, {});
 }
@@ -337,7 +409,6 @@ pub fn getFlattenFieldsSchema(comptime T: type, comptime schema: anytype) []cons
     return opts.flatten;
 }
 
-/// Whether a field has a custom with module.
 pub fn hasFieldWith(comptime T: type, comptime field_name: []const u8) bool {
     return hasFieldWithSchema(T, field_name, {});
 }
@@ -356,7 +427,6 @@ pub fn hasFieldWithSchema(comptime T: type, comptime field_name: []const u8, com
     return @hasField(@TypeOf(opts.with), field_name);
 }
 
-/// Get the with module type for a field.
 pub fn getFieldWith(comptime T: type, comptime field_name: []const u8) type {
     return getFieldWithSchema(T, field_name, {});
 }
@@ -371,8 +441,6 @@ pub fn getFieldWithSchema(comptime T: type, comptime field_name: []const u8, com
     }
     return @field(T.serde.with, field_name);
 }
-
-// Tests.
 
 const testing = std.testing;
 
@@ -469,8 +537,6 @@ test "no serde options" {
     try testing.expectEqual(2, comptime countSerializableFields(Plain));
 }
 
-// Schema override tests.
-
 test "schema wireFieldName overrides T.serde" {
     const User = struct {
         id: u64,
@@ -482,8 +548,7 @@ test "schema wireFieldName overrides T.serde" {
     };
     const schema = .{ .rename = .{ .id = "ID" } };
     try testing.expectEqualStrings("ID", comptime wireFieldNameSchema(User, "id", schema));
-    // Field not in schema falls through to T.serde — but T.serde.rename doesn't
-    // have first_name either, so it's just the field name.
+    // Not in schema.rename, not in T.serde.rename → identity.
     try testing.expectEqualStrings("first_name", comptime wireFieldNameSchema(User, "first_name", schema));
 }
 
@@ -504,10 +569,9 @@ test "schema skip overrides T.serde" {
             .skip = .{ .b = SkipMode.always },
         };
     };
-    // Schema skips 'a' instead of 'b'.
     const schema = .{ .skip = .{ .a = SkipMode.always } };
     try testing.expect(comptime shouldSkipFieldSchema(S, "a", .serialize, schema));
-    // 'b' is skipped via T.serde, but schema doesn't mention it — T.serde still applies.
+    // 'b' not in schema, but T.serde.skip still applies.
     try testing.expect(comptime shouldSkipFieldSchema(S, "b", .serialize, schema));
     try testing.expect(!comptime shouldSkipFieldSchema(S, "c", .serialize, schema));
 }
@@ -543,4 +607,183 @@ test "schema on plain type with no T.serde" {
     try testing.expectEqualStrings("Y", comptime wireFieldNameSchema(Point, "y", schema));
     try testing.expect(comptime shouldSkipFieldSchema(Point, "z", .serialize, schema));
     try testing.expectEqual(@as(usize, 2), comptime countSerializableFieldsSchema(Point, schema));
+}
+
+test "wireFieldNameForDir: symmetric rename returns same for both directions" {
+    const User = struct {
+        id: u64,
+        pub const serde = .{ .rename = .{ .id = "user_id" } };
+    };
+    try testing.expectEqualStrings("user_id", comptime wireFieldNameForDir(User, "id", {}, .serialize));
+    try testing.expectEqualStrings("user_id", comptime wireFieldNameForDir(User, "id", {}, .deserialize));
+}
+
+test "wireFieldNameForDir: rename_serialize only affects serialize" {
+    const User = struct {
+        user_id: u64,
+        pub const serde = .{
+            .rename_serialize = .{ .user_id = "id" },
+        };
+    };
+    try testing.expectEqualStrings("id", comptime wireFieldNameForDir(User, "user_id", {}, .serialize));
+    try testing.expectEqualStrings("user_id", comptime wireFieldNameForDir(User, "user_id", {}, .deserialize));
+}
+
+test "wireFieldNameForDir: rename_deserialize only affects deserialize" {
+    const Config = struct {
+        endpoint: []const u8,
+        pub const serde = .{
+            .rename_deserialize = .{ .endpoint = "url" },
+        };
+    };
+    try testing.expectEqualStrings("endpoint", comptime wireFieldNameForDir(Config, "endpoint", {}, .serialize));
+    try testing.expectEqualStrings("url", comptime wireFieldNameForDir(Config, "endpoint", {}, .deserialize));
+}
+
+test "wireFieldNameForDir: dir-specific overrides symmetric rename" {
+    const Item = struct {
+        name: []const u8,
+        pub const serde = .{
+            .rename = .{ .name = "title" },
+            .rename_serialize = .{ .name = "label" },
+        };
+    };
+    try testing.expectEqualStrings("label", comptime wireFieldNameForDir(Item, "name", {}, .serialize));
+    try testing.expectEqualStrings("title", comptime wireFieldNameForDir(Item, "name", {}, .deserialize));
+}
+
+test "wireFieldNameForDir: rename_all_serialize / rename_all_deserialize" {
+    const Rec = struct {
+        first_name: []const u8,
+        pub const serde = .{
+            .rename_all_serialize = NamingConvention.camel_case,
+            .rename_all_deserialize = NamingConvention.kebab_case,
+        };
+    };
+    try testing.expectEqualStrings("firstName", comptime wireFieldNameForDir(Rec, "first_name", {}, .serialize));
+    try testing.expectEqualStrings("first-name", comptime wireFieldNameForDir(Rec, "first_name", {}, .deserialize));
+}
+
+test "wireFieldNameForDir: dir rename_all overrides symmetric rename_all" {
+    const Rec = struct {
+        max_retries: u32,
+        pub const serde = .{
+            .rename_all = NamingConvention.camel_case,
+            .rename_all_deserialize = NamingConvention.kebab_case,
+        };
+    };
+    try testing.expectEqualStrings("maxRetries", comptime wireFieldNameForDir(Rec, "max_retries", {}, .serialize));
+    try testing.expectEqualStrings("max-retries", comptime wireFieldNameForDir(Rec, "max_retries", {}, .deserialize));
+}
+
+test "wireFieldNameForDir: per-field rename beats rename_all in same direction" {
+    const Rec = struct {
+        id: u64,
+        first_name: []const u8,
+        pub const serde = .{
+            .rename_all_serialize = NamingConvention.camel_case,
+            .rename_serialize = .{ .id = "ID" },
+        };
+    };
+    try testing.expectEqualStrings("ID", comptime wireFieldNameForDir(Rec, "id", {}, .serialize));
+    try testing.expectEqualStrings("firstName", comptime wireFieldNameForDir(Rec, "first_name", {}, .serialize));
+}
+
+test "wireFieldNameForDir: schema overrides T.serde" {
+    const User = struct {
+        id: u64,
+        pub const serde = .{ .rename_serialize = .{ .id = "user_id" } };
+    };
+    const schema = .{ .rename_serialize = .{ .id = "ID" } };
+    try testing.expectEqualStrings("ID", comptime wireFieldNameForDir(User, "id", schema, .serialize));
+}
+
+test "wireFieldNameForDir: works on union types" {
+    const Cmd = union(enum) {
+        ping: void,
+        set: i32,
+        pub const serde = .{
+            .rename = .{ .ping = "PING", .set = "SET" },
+        };
+    };
+    try testing.expectEqualStrings("PING", comptime wireFieldNameForDir(Cmd, "ping", {}, .serialize));
+    try testing.expectEqualStrings("SET", comptime wireFieldNameForDir(Cmd, "set", {}, .serialize));
+    try testing.expectEqualStrings("PING", comptime wireFieldNameForDir(Cmd, "ping", {}, .deserialize));
+}
+
+test "wireFieldNameForDir: no options returns identity" {
+    const Plain = struct { x: u32 };
+    try testing.expectEqualStrings("x", comptime wireFieldNameForDir(Plain, "x", {}, .serialize));
+    try testing.expectEqualStrings("x", comptime wireFieldNameForDir(Plain, "x", {}, .deserialize));
+}
+
+test "getFieldAliases: no alias returns empty" {
+    const Plain = struct { x: u32 };
+    const aliases = comptime getFieldAliases(Plain, "x", {});
+    try testing.expectEqual(@as(usize, 0), aliases.len);
+}
+
+test "getFieldAliases: T.serde alias" {
+    const Config = struct {
+        endpoint: []const u8,
+        pub const serde = .{
+            .alias = .{ .endpoint = &.{ "url", "uri" } },
+        };
+    };
+    const aliases = comptime getFieldAliases(Config, "endpoint", {});
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expectEqualStrings("url", aliases[0]);
+    try testing.expectEqualStrings("uri", aliases[1]);
+}
+
+test "getFieldAliases: schema alias overrides T.serde" {
+    const Config = struct {
+        endpoint: []const u8,
+        pub const serde = .{
+            .alias = .{ .endpoint = &.{"url"} },
+        };
+    };
+    const schema = .{ .alias = .{ .endpoint = &.{ "addr", "host" } } };
+    const aliases = comptime getFieldAliases(Config, "endpoint", schema);
+    try testing.expectEqual(@as(usize, 2), aliases.len);
+    try testing.expectEqualStrings("addr", aliases[0]);
+}
+
+test "matchesDeserializeName: primary name matches" {
+    const User = struct {
+        id: u64,
+        pub const serde = .{ .rename = .{ .id = "user_id" } };
+    };
+    try testing.expect(matchesDeserializeName(User, "id", "user_id", {}));
+    try testing.expect(!matchesDeserializeName(User, "id", "id", {}));
+}
+
+test "matchesDeserializeName: alias matches" {
+    const User = struct {
+        user_id: u64,
+        pub const serde = .{
+            .rename_deserialize = .{ .user_id = "userId" },
+            .alias = .{ .user_id = &.{ "user_id", "uid" } },
+        };
+    };
+    try testing.expect(matchesDeserializeName(User, "user_id", "userId", {}));
+    try testing.expect(matchesDeserializeName(User, "user_id", "user_id", {}));
+    try testing.expect(matchesDeserializeName(User, "user_id", "uid", {}));
+    try testing.expect(!matchesDeserializeName(User, "user_id", "ID", {}));
+}
+
+test "matchesDeserializeName: dir-specific deser name + alias" {
+    const Rec = struct {
+        name: []const u8,
+        pub const serde = .{
+            .rename_serialize = .{ .name = "title" },
+            .rename_deserialize = .{ .name = "label" },
+            .alias = .{ .name = &.{ "name", "n" } },
+        };
+    };
+    try testing.expect(matchesDeserializeName(Rec, "name", "label", {}));
+    try testing.expect(matchesDeserializeName(Rec, "name", "name", {}));
+    try testing.expect(matchesDeserializeName(Rec, "name", "n", {}));
+    // ser name must NOT match deser direction
+    try testing.expect(!matchesDeserializeName(Rec, "name", "title", {}));
 }

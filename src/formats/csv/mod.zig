@@ -64,8 +64,6 @@ pub fn toWriterWith(writer: *std.io.Writer, value: anytype, dialect: Dialect) !v
     }
 }
 
-// Schema-aware API.
-
 /// Serialize a slice of structs to CSV with an external schema.
 pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
     return toSliceWithSchema(allocator, value, .{}, schema);
@@ -160,7 +158,7 @@ fn writeHeaderRowSchema(comptime T: type, ser: *Serializer, comptime schema: any
     const info = @typeInfo(T).@"struct";
     inline for (info.fields) |field| {
         if (comptime options.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
-        const wire_name = comptime options.wireFieldNameSchema(T, field.name, schema);
+        const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
         try ser.serializeString(wire_name);
     }
     try ser.endRow();
@@ -222,7 +220,7 @@ fn writeHeaderRow(comptime T: type, ser: *Serializer) SerializeError!void {
     const info = @typeInfo(T).@"struct";
     inline for (info.fields) |field| {
         if (comptime options.shouldSkipField(T, field.name, .serialize)) continue;
-        const wire_name = comptime options.wireFieldName(T, field.name);
+        const wire_name = comptime options.wireFieldNameForDir(T, field.name, {}, .serialize);
         try ser.serializeString(wire_name);
     }
     try ser.endRow();
