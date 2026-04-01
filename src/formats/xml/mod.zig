@@ -369,8 +369,6 @@ fn readAll(allocator: std.mem.Allocator, reader: *std.io.Reader) ![]u8 {
     return buf.toOwnedSlice(allocator) catch return error.OutOfMemory;
 }
 
-
-
 const testing = std.testing;
 
 test "serialize simple struct" {

@@ -8,6 +8,59 @@ Serialization framework for Zig
 
 Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zig type across JSON, MessagePack, TOML, YAML, XML, ZON, and CSV without macros, code generation, or runtime type information.
 
+## Table of Contents
+
+- [Why serde.zig?](#why-serdezig)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Formats](#formats)
+- [Supported Types](#supported-types)
+- [Examples](#examples)
+  - [Nested structs](#nested-structs)
+  - [Arena allocator](#arena-allocator-recommended-for-deserialization)
+  - [Zero-copy deserialization](#zero-copy-deserialization)
+  - [Pretty-printed output](#pretty-printed-output)
+  - [Tagged unions](#tagged-unions)
+  - [Enums](#enums)
+  - [Maps](#maps)
+  - [CSV](#csv)
+  - [TOML](#toml)
+  - [YAML](#yaml)
+  - [XML](#xml)
+  - [ZON](#zon)
+- [Serde Options](#serde-options)
+  - [Field renaming](#field-renaming)
+  - [Asymmetric renaming](#asymmetric-renaming)
+  - [Field aliases](#field-aliases)
+  - [Enum and union variant renaming](#enum-and-union-variant-renaming)
+  - [Skip fields](#skip-fields)
+  - [Default values](#default-values)
+  - [Deny unknown fields](#deny-unknown-fields)
+  - [Flatten nested structs](#flatten-nested-structs)
+  - [Union tagging styles](#union-tagging-styles)
+  - [Enum representation](#enum-representation)
+  - [Per-field custom serialization](#per-field-custom-serialization)
+- [Out-of-Band Schema](#out-of-band-schema)
+- [Out-of-Band Type Overrides](#out-of-band-type-overrides)
+- [Custom Serialization](#custom-serialization)
+- [Error Handling](#error-handling)
+- [Tests](#tests)
+- [License](#license)
+
+## Why serde.zig?
+
+**No boilerplate.** No macros, no code generation, no build steps. Just declare a struct and serialize it. Zig's comptime reflection handles everything at compile time.
+
+**Seven formats, one API.** JSON, MessagePack, TOML, YAML, XML, ZON, and CSV all share the same `toSlice`/`fromSlice`/`toWriter`/`fromReader` interface. Learn once, use everywhere.
+
+**Out-of-band schemas.** Serialize the same type differently in different contexts without modifying the type itself. Essential for third-party types and API versioning.
+
+**Zero-copy JSON.** `fromSliceBorrowed` returns string slices that point directly into the input buffer when no escape sequences are present. No allocation, no copying.
+
+**Comptime validation.** Invalid types, missing fields, and incorrect option names are caught at compile time, not at runtime.
+
+## Quick Start
+
 ```zig
 const serde = @import("serde");
 
@@ -318,7 +371,7 @@ const User = struct {
     first_name: []const u8,
     last_name: []const u8,
 
-    pub const serde_options = .{
+    pub const serde = .{
         .rename = .{ .user_id = "id" },
         .rename_all = serde.NamingConvention.camel_case,
     };
@@ -500,7 +553,7 @@ const Command = union(enum) {
     ping: void,
     execute: struct { query: []const u8 },
 
-    pub const serde_options = .{
+    pub const serde = .{
         // .external (default): {"execute":{"query":"SELECT 1"}}
         // .internal:           {"type":"execute","query":"SELECT 1"}
         // .adjacent:           {"type":"execute","content":{"query":"SELECT 1"}}
@@ -519,7 +572,7 @@ const Status = enum(u8) {
     inactive = 1,
     pending = 2,
 
-    pub const serde_options = .{
+    pub const serde = .{
         .enum_repr = serde.EnumRepr.integer, // serialize as 0, 1, 2
     };
 };
@@ -533,7 +586,7 @@ const Event = struct {
     name: []const u8,
     created_at: i64,
 
-    pub const serde_options = .{
+    pub const serde = .{
         .with = .{
             .created_at = serde.helpers.UnixTimestampMs,
         },
