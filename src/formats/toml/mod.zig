@@ -729,3 +729,53 @@ test "deserialize error: type mismatch" {
     const result = fromSlice(Cfg, arena.allocator(), "x = \"not a number\"\n");
     try testing.expectError(error.WrongType, result);
 }
+
+test "deserialize StringHashMap" {
+    const V = struct { foo: []const u8 };
+    const T = struct { a: std.StringHashMap(V) };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const parsed = try fromSlice(T, arena.allocator(),
+        \\[a.b]
+        \\foo = "bar"
+    );
+    try testing.expectEqual(@as(usize, 1), parsed.a.count());
+    const b = parsed.a.get("b") orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("bar", b.foo);
+}
+
+test "roundtrip StringHashMap scalar values" {
+    var map = std.StringHashMap(i32).init(testing.allocator);
+    defer map.deinit();
+    try map.put("x", 1);
+    try map.put("y", 2);
+
+    const Root = struct { data: std.StringHashMap(i32) };
+    const bytes = try toSlice(testing.allocator, Root{ .data = map });
+    defer testing.allocator.free(bytes);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try fromSlice(Root, arena.allocator(), bytes);
+    try testing.expectEqual(@as(i32, 1), result.data.get("x").?);
+    try testing.expectEqual(@as(i32, 2), result.data.get("y").?);
+}
+
+test "roundtrip StringHashMap struct values" {
+    const V = struct { val: i32 };
+    var map = std.StringHashMap(V).init(testing.allocator);
+    defer map.deinit();
+    try map.put("a", .{ .val = 10 });
+    try map.put("b", .{ .val = 20 });
+
+    const Root = struct { data: std.StringHashMap(V) };
+    const bytes = try toSlice(testing.allocator, Root{ .data = map });
+    defer testing.allocator.free(bytes);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try fromSlice(Root, arena.allocator(), bytes);
+    try testing.expectEqual(@as(i32, 10), result.data.get("a").?.val);
+    try testing.expectEqual(@as(i32, 20), result.data.get("b").?.val);
+}

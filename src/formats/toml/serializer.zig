@@ -106,7 +106,7 @@ pub const StructSerializer = struct {
         // Sub-tables and array-of-tables are deferred to appear after scalar fields.
         // Unions with payload variants also serialize as sub-tables (external tag
         // produces a struct with one key = variant name).
-        if (k == .@"struct") {
+        if (k == .@"struct" or k == .map) {
             try self.deferSubTable(key, value, false);
             return;
         }
@@ -133,9 +133,74 @@ pub const StructSerializer = struct {
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
-        _ = key;
-        _ = value;
-        _ = self;
+        const V = @TypeOf(value);
+        const k = comptime kind_mod.typeKind(V);
+
+        if (k == .optional) {
+            if (value == null) return;
+            return self.serializeEntry(key, value.?);
+        }
+
+        if (k == .@"struct" or k == .map or (k == .@"union" and comptime unionHasPayload(V))) {
+            try self.deferSubTableDynamic(key, value);
+            return;
+        }
+
+        const K = @TypeOf(key);
+        if (K == []const u8) {
+            writeTomlKey(self.out, key) catch return error.WriteFailed;
+        } else if (comptime @typeInfo(K) == .int) {
+            self.out.print("{d}", .{key}) catch return error.WriteFailed;
+        } else {
+            @compileError("unsupported map key type for TOML: " ++ @typeName(K));
+        }
+        self.out.writeAll(" = ") catch return error.WriteFailed;
+
+        var child = Serializer{
+            .out = self.out,
+            .allocator = self.allocator,
+            .path = self.path,
+        };
+        try core_serialize.serialize(V, value, &child, .{});
+        self.out.writeByte('\n') catch return error.WriteFailed;
+    }
+
+    fn deferSubTableDynamic(self: *StructSerializer, key: []const u8, value: anytype) Error!void {
+        var aw: std.io.Writer.Allocating = .init(self.allocator);
+
+        const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
+        @memcpy(new_path[0..self.path.len], self.path);
+        new_path[self.path.len] = key;
+
+        aw.writer.writeByte('\n') catch return error.WriteFailed;
+        aw.writer.writeByte('[') catch return error.WriteFailed;
+        for (new_path, 0..) |seg, i| {
+            if (i > 0) aw.writer.writeByte('.') catch return error.WriteFailed;
+            writeTomlKey(&aw.writer, seg) catch return error.WriteFailed;
+        }
+        aw.writer.writeAll("]\n") catch return error.WriteFailed;
+
+        var child_ser = Serializer{
+            .out = &aw.writer,
+            .allocator = self.allocator,
+            .path = new_path,
+        };
+        core_serialize.serialize(@TypeOf(value), value, &child_ser, .{}) catch {
+            self.allocator.free(new_path);
+            aw.deinit();
+            return error.WriteFailed;
+        };
+        self.allocator.free(new_path);
+
+        const data = aw.toOwnedSlice() catch return error.OutOfMemory;
+        self.deferred.append(self.allocator, .{
+            .key = key,
+            .data = data,
+            .is_array_of_tables = false,
+        }) catch {
+            self.allocator.free(data);
+            return error.OutOfMemory;
+        };
     }
 
     pub fn end(self: *StructSerializer) Error!void {
