@@ -223,6 +223,11 @@ fn deserializeValue(comptime T: type, val: *const Value, allocator: Allocator) D
             return ptr;
         },
         .void => return {},
+        .map => {
+            if (val.* != .table) return error.WrongType;
+            var deser = Deserializer.init(&val.table);
+            return core_deserialize.deserialize(T, allocator, &deser, .{});
+        },
         else => @compileError("TOML deserialization does not support: " ++ @typeName(T)),
     }
 }

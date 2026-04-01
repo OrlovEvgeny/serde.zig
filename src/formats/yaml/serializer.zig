@@ -141,7 +141,7 @@ pub const StructSerializer = struct {
 
         // Compound types start on the next line. Unions with payloads are treated
         // as compound because external tagging serializes them as a mapping.
-        if (k == .@"struct" or (k == .@"union" and comptime unionHasPayload(@TypeOf(value)))) {
+        if (k == .@"struct" or k == .map or (k == .@"union" and comptime unionHasPayload(@TypeOf(value)))) {
             self.out.writeByte('\n') catch return error.WriteFailed;
             var child = Serializer{
                 .out = self.out,
@@ -179,9 +179,64 @@ pub const StructSerializer = struct {
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
-        _ = key;
-        _ = value;
-        _ = self;
+        const V = @TypeOf(value);
+        const k = comptime kind_mod.typeKind(V);
+
+        if (self.first and self.is_map_value) {
+            self.first = false;
+            writeIndent(self.out, self.depth, self.indent_size) catch return error.WriteFailed;
+        } else {
+            if (!self.first) {
+                self.out.writeByte('\n') catch return error.WriteFailed;
+            }
+            self.first = false;
+            writeIndent(self.out, self.depth, self.indent_size) catch return error.WriteFailed;
+        }
+
+        const K = @TypeOf(key);
+        if (K == []const u8) {
+            writeYamlKey(self.out, key) catch return error.WriteFailed;
+        } else if (comptime @typeInfo(K) == .int) {
+            self.out.print("{d}", .{key}) catch return error.WriteFailed;
+        } else {
+            @compileError("unsupported map key type for YAML: " ++ @typeName(K));
+        }
+        self.out.writeAll(": ") catch return error.WriteFailed;
+
+        if (k == .@"struct" or k == .map or (k == .@"union" and comptime unionHasPayload(V))) {
+            self.out.writeByte('\n') catch return error.WriteFailed;
+            var child = Serializer{
+                .out = self.out,
+                .depth = self.depth + 1,
+                .indent_size = self.indent_size,
+                .is_map_value = true,
+                .opts = self.opts,
+            };
+            core_serialize.serialize(V, value, &child, .{}) catch return error.WriteFailed;
+            return;
+        }
+
+        if (k == .slice or k == .array) {
+            self.out.writeByte('\n') catch return error.WriteFailed;
+            var child = Serializer{
+                .out = self.out,
+                .depth = self.depth + 1,
+                .indent_size = self.indent_size,
+                .is_map_value = false,
+                .opts = self.opts,
+            };
+            core_serialize.serialize(V, value, &child, .{}) catch return error.WriteFailed;
+            return;
+        }
+
+        var child = Serializer{
+            .out = self.out,
+            .depth = self.depth + 1,
+            .indent_size = self.indent_size,
+            .is_map_value = false,
+            .opts = self.opts,
+        };
+        core_serialize.serialize(V, value, &child, .{}) catch return error.WriteFailed;
     }
 
     pub fn end(self: *StructSerializer) Error!void {

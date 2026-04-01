@@ -245,6 +245,11 @@ fn deserializeValue(comptime T: type, val: *const Value, allocator: Allocator) D
             if (val.* != .null_val) return error.WrongType;
             return {};
         },
+        .map => {
+            if (val.* != .mapping) return error.WrongType;
+            var deser = Deserializer.init(val);
+            return core_deserialize.deserialize(T, allocator, &deser, .{});
+        },
         else => @compileError("YAML deserialization does not support: " ++ @typeName(T)),
     }
 }
