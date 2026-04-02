@@ -1,3 +1,8 @@
+//! MessagePack serialization and deserialization.
+//!
+//! Compact binary format. Serialize with `toSlice` / `toWriter`, and
+//! deserialize with `fromSlice` / `fromReader`.
+
 const std = @import("std");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");

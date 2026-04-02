@@ -1,3 +1,9 @@
+//! JSON serialization and deserialization.
+//!
+//! Serialize any Zig type to JSON with `toSlice` / `toWriter`, and
+//! deserialize with `fromSlice` / `fromReader`. Supports pretty-printing,
+//! zero-copy borrowed deserialization, and streaming output.
+
 const std = @import("std");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");

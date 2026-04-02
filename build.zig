@@ -92,4 +92,22 @@ pub fn build(b: *std.Build) void {
         });
         fuzz_step.dependOn(&fuzz_lib.step);
     }
+
+    // Documentation generation.
+    const docs_step = b.step("docs", "Generate autodocs");
+    const docs_lib = b.addLibrary(.{
+        .name = "serde",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const install_docs = b.addInstallDirectory(.{
+        .source_dir = docs_lib.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+    docs_step.dependOn(&install_docs.step);
 }

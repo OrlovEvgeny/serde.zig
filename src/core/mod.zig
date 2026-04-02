@@ -1,3 +1,9 @@
+//! Core serialization and deserialization engine.
+//!
+//! Provides the generic `serialize` and `deserialize` functions, shared
+//! option types (`NamingConvention`, `SkipMode`, `EnumRepr`, `UnionTag`),
+//! and the format-agnostic `Value` representation.
+
 pub const kind = @import("kind.zig");
 pub const options = @import("options.zig");
 pub const serialize_mod = @import("serialize.zig");

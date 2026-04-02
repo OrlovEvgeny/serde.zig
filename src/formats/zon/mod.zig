@@ -1,3 +1,9 @@
+//! ZON (Zig Object Notation) serialization and deserialization.
+//!
+//! Serialize any Zig type to ZON with `toSlice` / `toWriter`, and
+//! deserialize with `fromSlice` / `fromReader`. Pretty-printed by default
+//! with indent of 4 spaces.
+
 const std = @import("std");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");
