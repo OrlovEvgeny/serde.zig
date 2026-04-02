@@ -1,3 +1,29 @@
+//! # serde.zig
+//!
+//! A serialization framework for Zig using comptime reflection to
+//! serialize and deserialize any Zig type across multiple formats
+//! without macros, code generation, or runtime type information.
+//!
+//! ## Supported Formats
+//!
+//! | Module   | Format      |
+//! |----------|-------------|
+//! | `json`   | JSON        |
+//! | `msgpack`| MessagePack |
+//! | `toml`   | TOML        |
+//! | `yaml`   | YAML        |
+//! | `xml`    | XML         |
+//! | `csv`    | CSV         |
+//! | `zon`    | ZON         |
+//!
+//! ## Quick Start
+//!
+//! ```
+//! const serde = @import("serde");
+//! const json_bytes = try serde.json.toSlice(allocator, my_struct);
+//! const result = try serde.json.fromSlice(MyStruct, allocator, json_bytes);
+//! ```
+
 pub const core = @import("core/mod.zig");
 pub const json = @import("formats/json/mod.zig");
 pub const msgpack = @import("formats/msgpack/mod.zig");

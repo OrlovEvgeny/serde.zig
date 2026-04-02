@@ -1,3 +1,9 @@
+//! YAML serialization and deserialization.
+//!
+//! Serialize any Zig type to YAML with `toSlice` / `toWriter`, and
+//! deserialize with `fromSlice` / `fromReader`. Supports flow and block
+//! styles, multi-line strings, and anchors.
+
 const std = @import("std");
 const parser_mod = @import("parser.zig");
 const serializer_mod = @import("serializer.zig");

@@ -1,3 +1,9 @@
+//! TOML serialization and deserialization.
+//!
+//! Serialize structs to TOML with `toSlice` / `toWriter`, and deserialize
+//! with `fromSlice` / `fromReader`. The top-level value must be a struct
+//! (TOML requires a table at the document root).
+
 const std = @import("std");
 const parser_mod = @import("parser.zig");
 const serializer_mod = @import("serializer.zig");

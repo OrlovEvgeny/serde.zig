@@ -31,3 +31,32 @@ jobs:
 
       - name: Build fuzz targets
         run: zig build fuzz
+
+  docs:
+    name: Deploy docs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build docs
+        run: zig build docs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: zig-out/docs
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

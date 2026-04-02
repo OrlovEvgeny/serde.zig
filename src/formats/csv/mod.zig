@@ -1,3 +1,9 @@
+//! CSV serialization and deserialization.
+//!
+//! Serialize slices of structs to CSV with `toSlice` / `toWriter`, and
+//! deserialize with `fromSlice` / `fromReader`. Supports custom dialects
+//! (TSV, Excel, Unix) and BOM handling.
+
 const std = @import("std");
 const scanner_mod = @import("scanner.zig");
 const serializer_mod = @import("serializer.zig");

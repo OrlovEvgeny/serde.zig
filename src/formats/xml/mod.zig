@@ -1,3 +1,9 @@
+//! XML serialization and deserialization.
+//!
+//! Serialize structs to XML with `toSlice` / `toWriter`, and deserialize
+//! with `fromSlice` / `fromReader`. Supports XML attributes, custom root
+//! element names, pretty-printing, and entity escaping.
+
 const std = @import("std");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");
