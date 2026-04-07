@@ -93,6 +93,45 @@ pub fn build(b: *std.Build) void {
         fuzz_step.dependOn(&fuzz_lib.step);
     }
 
+    // Example programs.
+    const examples_step = b.step("examples", "Build all examples");
+
+    const example_sources = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "example-basic-json", .src = "examples/basic_json/main.zig" },
+        .{ .name = "example-config-toml", .src = "examples/config_toml/main.zig" },
+        .{ .name = "example-custom-types", .src = "examples/custom_types/main.zig" },
+        .{ .name = "example-http-api", .src = "examples/http_api/main.zig" },
+        .{ .name = "example-config-yaml", .src = "examples/config_yaml/main.zig" },
+        .{ .name = "example-csv-pipeline", .src = "examples/csv_pipeline/main.zig" },
+        .{ .name = "example-config-xml", .src = "examples/config_xml/main.zig" },
+        .{ .name = "example-binary-interchange", .src = "examples/binary_interchange/main.zig" },
+        .{ .name = "example-multi-format", .src = "examples/multi_format/main.zig" },
+        .{ .name = "example-schema-override", .src = "examples/schema_override/main.zig" },
+        .{ .name = "example-dynamic-value", .src = "examples/dynamic_value/main.zig" },
+        .{ .name = "example-streaming-ndjson", .src = "examples/streaming_ndjson/main.zig" },
+    };
+
+    inline for (example_sources) |ex| {
+        const exe_mod = b.createModule(.{
+            .root_source_file = b.path(ex.src),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "serde", .module = serde_mod },
+            },
+        });
+        const exe = b.addExecutable(.{
+            .name = ex.name,
+            .root_module = exe_mod,
+        });
+        const install = b.addInstallArtifact(exe, .{});
+        examples_step.dependOn(&install.step);
+
+        const step = b.step(ex.name, "Run " ++ ex.src);
+        const example_run = b.addRunArtifact(exe);
+        step.dependOn(&example_run.step);
+    }
+
     // Documentation generation.
     const docs_step = b.step("docs", "Generate autodocs");
     const docs_lib = b.addLibrary(.{

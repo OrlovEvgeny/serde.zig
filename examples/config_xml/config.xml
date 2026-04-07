@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config id="app-001" version="2.1">
+  <name>my-service</name>
+  <database>
+    <host>localhost</host>
+    <port>5432</port>
+    <name>myapp</name>
+  </database>
+  <features>
+    <item>logging</item>
+    <item>metrics</item>
+    <item>tracing</item>
+  </features>
+</config>
