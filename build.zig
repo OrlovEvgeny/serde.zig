@@ -93,6 +93,37 @@ pub fn build(b: *std.Build) void {
         fuzz_step.dependOn(&fuzz_lib.step);
     }
 
+    // Example programs.
+    const examples_step = b.step("examples", "Build all examples");
+
+    const example_sources = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "example-json-basic", .src = "examples/json_basic.zig" },
+        .{ .name = "example-config-toml", .src = "examples/config_toml.zig" },
+        .{ .name = "example-custom-serializer", .src = "examples/custom_serializer.zig" },
+        .{ .name = "example-http-api", .src = "examples/http_api.zig" },
+    };
+
+    inline for (example_sources) |ex| {
+        const exe_mod = b.createModule(.{
+            .root_source_file = b.path(ex.src),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "serde", .module = serde_mod },
+            },
+        });
+        const exe = b.addExecutable(.{
+            .name = ex.name,
+            .root_module = exe_mod,
+        });
+        const install = b.addInstallArtifact(exe, .{});
+        examples_step.dependOn(&install.step);
+
+        const step = b.step(ex.name, "Run " ++ ex.src);
+        const example_run = b.addRunArtifact(exe);
+        step.dependOn(&example_run.step);
+    }
+
     // Documentation generation.
     const docs_step = b.step("docs", "Generate autodocs");
     const docs_lib = b.addLibrary(.{
