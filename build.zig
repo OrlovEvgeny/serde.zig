@@ -97,10 +97,18 @@ pub fn build(b: *std.Build) void {
     const examples_step = b.step("examples", "Build all examples");
 
     const example_sources = [_]struct { name: []const u8, src: []const u8 }{
-        .{ .name = "example-json-basic", .src = "examples/json_basic.zig" },
-        .{ .name = "example-config-toml", .src = "examples/config_toml.zig" },
-        .{ .name = "example-custom-serializer", .src = "examples/custom_serializer.zig" },
-        .{ .name = "example-http-api", .src = "examples/http_api.zig" },
+        .{ .name = "example-basic-json", .src = "examples/basic_json/main.zig" },
+        .{ .name = "example-config-toml", .src = "examples/config_toml/main.zig" },
+        .{ .name = "example-custom-types", .src = "examples/custom_types/main.zig" },
+        .{ .name = "example-http-api", .src = "examples/http_api/main.zig" },
+        .{ .name = "example-config-yaml", .src = "examples/config_yaml/main.zig" },
+        .{ .name = "example-csv-pipeline", .src = "examples/csv_pipeline/main.zig" },
+        .{ .name = "example-config-xml", .src = "examples/config_xml/main.zig" },
+        .{ .name = "example-binary-interchange", .src = "examples/binary_interchange/main.zig" },
+        .{ .name = "example-multi-format", .src = "examples/multi_format/main.zig" },
+        .{ .name = "example-schema-override", .src = "examples/schema_override/main.zig" },
+        .{ .name = "example-dynamic-value", .src = "examples/dynamic_value/main.zig" },
+        .{ .name = "example-streaming-ndjson", .src = "examples/streaming_ndjson/main.zig" },
     };
 
     inline for (example_sources) |ex| {

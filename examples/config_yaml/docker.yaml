@@ -1,0 +1,23 @@
+services:
+  web:
+    image: nginx:1.25
+    ports:
+      - 80
+      - 443
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: info
+    restart: always
+    depends_on:
+      - api
+      - db
+  api:
+    image: myapp:v2.1.0
+    ports:
+      - 3000
+    environment:
+      DATABASE_URL: postgres://db:5432/myapp
+  db:
+    image: postgres:16
+    ports:
+      - 5432

@@ -1,0 +1,5 @@
+name = "my-service"
+max-retries = 5
+base-url = "https://api.example.com"
+auth-token = "super-secret"
+log-level = "debug"
