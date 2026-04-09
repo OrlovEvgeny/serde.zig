@@ -107,27 +107,8 @@ pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opt: Options, 
 /// Deserialize a value of type T from a YAML byte slice with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     const val = try parser_mod.parse(allocator, input);
-
-    const k = comptime kind_mod.typeKind(T);
-
-    if (k == .@"struct") {
-        if (val != .mapping) return error.WrongType;
-        var deser = Deserializer.init(&val);
-        return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
-    }
-
     var deser = Deserializer.init(&val);
-    return switch (k) {
-        .bool => deser.deserializeBool(),
-        .int => deser.deserializeInt(T),
-        .float => deser.deserializeFloat(T),
-        .string => deser.deserializeString(allocator),
-        .optional => deser.deserializeOptional(kind_mod.Child(T), allocator),
-        .slice => deser.deserializeSeq(T, allocator),
-        .@"enum" => deser.deserializeEnum(T),
-        .@"union" => deser.deserializeUnion(T, allocator),
-        else => @compileError("YAML top-level type not supported: " ++ @typeName(T)),
-    };
+    return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
 }
 
 /// Deserialize from a reader with an external schema.
@@ -581,6 +562,89 @@ test "roundtrip union untagged" {
     defer arena.deinit();
     const result = try fromSlice(Root, arena.allocator(), bytes);
     try testing.expectEqual(@as(i32, 42), result.val.num.n);
+}
+
+test "untagged scalar union deserializes bare scalar" {
+    const ScalarUntagged = union(enum) {
+        string: []const u8,
+        int: i64,
+        boolean: bool,
+
+        pub const serde = .{
+            .tag = options.UnionTag.untagged,
+        };
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const value = try fromSlice(ScalarUntagged, arena.allocator(), "hello");
+    try testing.expectEqualStrings("hello", value.string);
+}
+
+test "untagged scalar union deserializes nested scalar" {
+    const ScalarUntagged = union(enum) {
+        string: []const u8,
+        int: i64,
+        boolean: bool,
+
+        pub const serde = .{
+            .tag = options.UnionTag.untagged,
+        };
+    };
+    const Root = struct {
+        value: ScalarUntagged,
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const result = try fromSlice(Root, arena.allocator(), "value: hello");
+    try testing.expectEqualStrings("hello", result.value.string);
+}
+
+test "external scalar union mapping still deserializes" {
+    const ScalarExternal = union(enum) {
+        string: []const u8,
+        int: i64,
+        boolean: bool,
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const value = try fromSlice(ScalarExternal, arena.allocator(), "string: hello");
+    try testing.expectEqualStrings("hello", value.string);
+}
+
+test "schema: top-level enum rename deserializes" {
+    const Mode = enum {
+        read_only,
+        write_only,
+    };
+    const schema = .{
+        .rename = .{
+            .read_only = "ro",
+            .write_only = "wo",
+        },
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const value = try fromSliceSchema(Mode, arena.allocator(), "ro", schema);
+    try testing.expectEqual(Mode.read_only, value);
+}
+
+test "schema: top-level untagged union deserializes" {
+    const Scalar = union(enum) {
+        string: []const u8,
+        int: i64,
+    };
+    const schema = .{
+        .tag = options.UnionTag.untagged,
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const value = try fromSliceSchema(Scalar, arena.allocator(), "hello", schema);
+    try testing.expectEqualStrings("hello", value.string);
 }
 
 test "roundtrip flatten" {

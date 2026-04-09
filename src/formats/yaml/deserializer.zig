@@ -73,7 +73,11 @@ pub const Deserializer = struct {
     }
 
     pub fn deserializeUnion(self: *Deserializer, comptime T: type, allocator: Allocator) Error!T {
-        return deserializeUnionFromValue(self.value, T, allocator);
+        const opt = @import("../../core/options.zig");
+        if (comptime opt.getUnionTag(T) == .external) {
+            return deserializeUnionFromValue(self.value, T, allocator);
+        }
+        return core_deserialize.deserialize(T, allocator, self, .{});
     }
 
     pub fn deserializeStruct(self: *Deserializer, comptime _: type) Error!MapAccess {
@@ -206,11 +210,8 @@ fn deserializeValue(comptime T: type, val: *const Value, allocator: Allocator) D
             if (tag_style == .external) {
                 return deserializeUnionFromValue(val, T, allocator);
             }
-            if (val.* == .mapping) {
-                var vd = ValueDeserializer.init(val);
-                return core_deserialize.deserialize(T, allocator, &vd, .{});
-            }
-            return error.WrongType;
+            var vd = ValueDeserializer.init(val);
+            return core_deserialize.deserialize(T, allocator, &vd, .{});
         },
         .slice => {
             if (val.* != .sequence) return error.WrongType;
@@ -340,7 +341,11 @@ const ValueDeserializer = struct {
     }
 
     pub fn deserializeUnion(self: *ValueDeserializer, comptime T: type, allocator: Allocator) Error!T {
-        return deserializeUnionFromValue(self.val, T, allocator);
+        const opt = @import("../../core/options.zig");
+        if (comptime opt.getUnionTag(T) == .external) {
+            return deserializeUnionFromValue(self.val, T, allocator);
+        }
+        return core_deserialize.deserialize(T, allocator, self, .{});
     }
 
     pub fn deserializeStruct(self: *ValueDeserializer, comptime _: type) Error!MapAccess {

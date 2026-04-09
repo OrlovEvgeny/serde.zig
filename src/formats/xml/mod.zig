@@ -342,7 +342,11 @@ fn xmlDeserialize(
             .scanner = scanner,
             .borrow_strings = borrow,
         };
-        return core_deserialize.deserialize(T, allocator, &deser, .{});
+        if (@TypeOf(schema) != void) {
+            return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
+        } else {
+            return core_deserialize.deserialize(T, allocator, &deser, .{});
+        }
     }
 }
 
@@ -742,4 +746,37 @@ test "deserialize string slice" {
     try testing.expectEqual(@as(usize, 2), val.tags.len);
     try testing.expectEqualStrings("a", val.tags[0]);
     try testing.expectEqualStrings("b", val.tags[1]);
+}
+
+test "schema: top-level enum rename deserializes" {
+    const Mode = enum {
+        read_only,
+        write_only,
+    };
+    const schema = .{
+        .rename = .{
+            .read_only = "ro",
+            .write_only = "wo",
+        },
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const value = try fromSliceSchema(Mode, arena.allocator(), "<value>ro</value>", schema);
+    try testing.expectEqual(Mode.read_only, value);
+}
+
+test "schema: top-level untagged union deserializes" {
+    const Scalar = union(enum) {
+        string: []const u8,
+        int: i64,
+    };
+    const schema = .{
+        .tag = opt.UnionTag.untagged,
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const value = try fromSliceSchema(Scalar, arena.allocator(), "<value>hello</value>", schema);
+    try testing.expectEqualStrings("hello", value.string);
 }
