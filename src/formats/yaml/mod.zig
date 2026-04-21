@@ -27,7 +27,7 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 
 /// Serialize any value to a YAML byte slice with options. Caller owns the returned memory.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
+    var aw: std.Io.Writer.Allocating = .init(allocator);
     try toWriterWithOptions(&aw.writer, value, opts);
     return aw.toOwnedSlice();
 }
@@ -42,12 +42,12 @@ pub fn toSliceAlloc(allocator: std.mem.Allocator, value: anytype) ![:0]u8 {
 }
 
 /// Serialize a value to a writer in YAML format.
-pub fn toWriter(writer: *std.io.Writer, value: anytype) !void {
+pub fn toWriter(writer: *std.Io.Writer, value: anytype) !void {
     return toWriterWithOptions(writer, value, .{});
 }
 
 /// Serialize a value to a writer in YAML format with options.
-pub fn toWriterWithOptions(writer: *std.io.Writer, value: anytype, opts: Options) !void {
+pub fn toWriterWithOptions(writer: *std.Io.Writer, value: anytype, opts: Options) !void {
     const T = @TypeOf(value);
     if (opts.explicit_start) {
         writer.writeAll("---\n") catch return error.WriteFailed;
@@ -80,18 +80,18 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 
 /// Serialize with options and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opt: Options, comptime schema: anytype) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
+    var aw: std.Io.Writer.Allocating = .init(allocator);
     try toWriterWithSchema(&aw.writer, value, opt, schema);
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in YAML format with an external schema.
-pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+pub fn toWriterSchema(writer: *std.Io.Writer, value: anytype, comptime schema: anytype) !void {
     return toWriterWithSchema(writer, value, .{}, schema);
 }
 
 /// Serialize with options to a writer with an external schema.
-pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opt: Options, comptime schema: anytype) !void {
+pub fn toWriterWithSchema(writer: *std.Io.Writer, value: anytype, opt: Options, comptime schema: anytype) !void {
     const T = @TypeOf(value);
     if (opt.explicit_start) {
         writer.writeAll("---\n") catch return error.WriteFailed;
@@ -112,7 +112,7 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
 }
 
 /// Deserialize from a reader with an external schema.
-pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime schema: anytype) !T {
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.Io.Reader, comptime schema: anytype) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSliceSchema(T, allocator, buf, schema);
@@ -148,7 +148,7 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 }
 
 /// Deserialize a value of type T from a reader.
-pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader) !T {
+pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.Io.Reader) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSlice(T, allocator, buf);
@@ -163,8 +163,8 @@ pub fn fromFilePath(comptime T: type, allocator: std.mem.Allocator, path: []cons
     return fromSlice(T, allocator, content);
 }
 
-fn readAll(allocator: std.mem.Allocator, reader: *std.io.Reader) ![]u8 {
-    return reader.allocRemaining(allocator, std.io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
+fn readAll(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]u8 {
+    return reader.allocRemaining(allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
 }
 
 const CoreValue = @import("../../core/value.zig").Value;
@@ -444,7 +444,7 @@ test "roundtrip empty struct" {
 
 test "toWriter" {
     const Cfg = struct { x: i32 };
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     try toWriter(&aw.writer, Cfg{ .x = 42 });
     const bytes = try aw.toOwnedSlice();
     defer testing.allocator.free(bytes);
@@ -470,7 +470,7 @@ test "toValue and fromValue" {
 test "fromReader" {
     const Cfg = struct { x: i32 };
     const input = "x: 42\n";
-    var reader: std.io.Reader = .fixed(input);
+    var reader: std.Io.Reader = .fixed(input);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const val = try fromReader(Cfg, arena.allocator(), &reader);

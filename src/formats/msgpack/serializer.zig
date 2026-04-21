@@ -6,12 +6,12 @@ const Allocator = std.mem.Allocator;
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
 pub const Serializer = struct {
-    out: *std.io.Writer,
+    out: *std.Io.Writer,
     allocator: Allocator,
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *std.io.Writer, allocator: Allocator) Serializer {
+    pub fn init(out: *std.Io.Writer, allocator: Allocator) Serializer {
         return .{ .out = out, .allocator = allocator };
     }
 
@@ -101,8 +101,8 @@ pub const Serializer = struct {
 // MessagePack maps require the element count in the header, but we don't know
 // the count until all fields are serialized (skip_if_null etc. are runtime decisions).
 pub const StructSerializer = struct {
-    parent_out: *std.io.Writer,
-    aw: std.io.Writer.Allocating,
+    parent_out: *std.Io.Writer,
+    aw: std.Io.Writer.Allocating,
     allocator: Allocator,
     field_count: u32,
 
@@ -137,8 +137,8 @@ pub const StructSerializer = struct {
 };
 
 pub const ArraySerializer = struct {
-    parent_out: *std.io.Writer,
-    aw: std.io.Writer.Allocating,
+    parent_out: *std.Io.Writer,
+    aw: std.Io.Writer.Allocating,
     allocator: Allocator,
     elem_count: u32,
 
@@ -222,7 +222,7 @@ pub const ArraySerializer = struct {
 
 // Wire format helpers.
 
-fn writeUint(out: *std.io.Writer, v: u64) !void {
+fn writeUint(out: *std.Io.Writer, v: u64) !void {
     if (v <= 0x7f) {
         try out.writeByte(@intCast(v));
     } else if (v <= 0xff) {
@@ -240,7 +240,7 @@ fn writeUint(out: *std.io.Writer, v: u64) !void {
     }
 }
 
-fn writeSint(out: *std.io.Writer, v: i64) !void {
+fn writeSint(out: *std.Io.Writer, v: i64) !void {
     if (v >= -32) {
         try out.writeByte(@bitCast(@as(i8, @intCast(v))));
     } else if (v >= -128) {
@@ -258,7 +258,7 @@ fn writeSint(out: *std.io.Writer, v: i64) !void {
     }
 }
 
-fn writeStrHeader(out: *std.io.Writer, len: usize) !void {
+fn writeStrHeader(out: *std.Io.Writer, len: usize) !void {
     if (len <= 31) {
         try out.writeByte(@as(u8, 0xa0) | @as(u8, @intCast(len)));
     } else if (len <= 0xff) {
@@ -273,7 +273,7 @@ fn writeStrHeader(out: *std.io.Writer, len: usize) !void {
     }
 }
 
-fn writeBinHeader(out: *std.io.Writer, len: usize) !void {
+fn writeBinHeader(out: *std.Io.Writer, len: usize) !void {
     if (len <= 0xff) {
         try out.writeByte(0xc4);
         try out.writeByte(@intCast(len));
@@ -286,7 +286,7 @@ fn writeBinHeader(out: *std.io.Writer, len: usize) !void {
     }
 }
 
-fn writeMapHeader(out: *std.io.Writer, count: u32) !void {
+fn writeMapHeader(out: *std.Io.Writer, count: u32) !void {
     if (count <= 15) {
         try out.writeByte(@as(u8, 0x80) | @as(u8, @intCast(count)));
     } else if (count <= 0xffff) {
@@ -298,7 +298,7 @@ fn writeMapHeader(out: *std.io.Writer, count: u32) !void {
     }
 }
 
-fn writeArrayHeader(out: *std.io.Writer, count: u32) !void {
+fn writeArrayHeader(out: *std.Io.Writer, count: u32) !void {
     if (count <= 15) {
         try out.writeByte(@as(u8, 0x90) | @as(u8, @intCast(count)));
     } else if (count <= 0xffff) {
@@ -319,7 +319,7 @@ fn toBE(comptime T: type, v: T) [@sizeOf(T)]u8 {
 const testing = std.testing;
 
 fn serializeToBytes(value: anytype) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, testing.allocator);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
@@ -469,7 +469,7 @@ test "serialize union void variant" {
 }
 
 test "serialize bytes bin8" {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, testing.allocator);
     try ser.serializeBytes("hello");
     const out = aw.toOwnedSlice() catch unreachable;
@@ -479,7 +479,7 @@ test "serialize bytes bin8" {
 }
 
 test "serialize bytes empty" {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, testing.allocator);
     try ser.serializeBytes("");
     const out = aw.toOwnedSlice() catch unreachable;

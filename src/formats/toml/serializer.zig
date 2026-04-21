@@ -9,14 +9,14 @@ const Kind = kind_mod.Kind;
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
 pub const Serializer = struct {
-    out: *std.io.Writer,
+    out: *std.Io.Writer,
     allocator: Allocator,
     // Current section path (e.g., "server.db") for emitting [section] headers.
     path: []const []const u8,
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *std.io.Writer, allocator: Allocator) Serializer {
+    pub fn init(out: *std.Io.Writer, allocator: Allocator) Serializer {
         return .{ .out = out, .allocator = allocator, .path = &.{} };
     }
 
@@ -80,7 +80,7 @@ pub const Serializer = struct {
 };
 
 pub const StructSerializer = struct {
-    out: *std.io.Writer,
+    out: *std.Io.Writer,
     allocator: Allocator,
     path: []const []const u8,
     deferred: std.ArrayList(DeferredField),
@@ -166,7 +166,7 @@ pub const StructSerializer = struct {
     }
 
     fn deferSubTableDynamic(self: *StructSerializer, key: []const u8, value: anytype) Error!void {
-        var aw: std.io.Writer.Allocating = .init(self.allocator);
+        var aw: std.Io.Writer.Allocating = .init(self.allocator);
 
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
         @memcpy(new_path[0..self.path.len], self.path);
@@ -223,7 +223,7 @@ pub const StructSerializer = struct {
 
     fn deferSubTable(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime is_aot_entry: bool) Error!void {
         _ = is_aot_entry;
-        var aw: std.io.Writer.Allocating = .init(self.allocator);
+        var aw: std.Io.Writer.Allocating = .init(self.allocator);
 
         // Build the new path.
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
@@ -264,7 +264,7 @@ pub const StructSerializer = struct {
     }
 
     fn deferArrayOfTables(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
-        var aw: std.io.Writer.Allocating = .init(self.allocator);
+        var aw: std.Io.Writer.Allocating = .init(self.allocator);
 
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
         @memcpy(new_path[0..self.path.len], self.path);
@@ -306,7 +306,7 @@ pub const StructSerializer = struct {
 };
 
 pub const ArraySerializer = struct {
-    out: *std.io.Writer,
+    out: *std.Io.Writer,
     allocator: Allocator,
     first: bool,
 
@@ -408,7 +408,7 @@ fn isStructSlice(comptime T: type) bool {
     return false;
 }
 
-fn writeTomlKey(out: *std.io.Writer, key: []const u8) std.io.Writer.Error!void {
+fn writeTomlKey(out: *std.Io.Writer, key: []const u8) std.Io.Writer.Error!void {
     if (isBareKey(key)) {
         try out.writeAll(key);
     } else {
@@ -425,7 +425,7 @@ fn isBareKey(key: []const u8) bool {
     return true;
 }
 
-fn writeTomlString(out: *std.io.Writer, value: []const u8) std.io.Writer.Error!void {
+fn writeTomlString(out: *std.Io.Writer, value: []const u8) std.Io.Writer.Error!void {
     try out.writeByte('"');
     for (value) |c| {
         switch (c) {
@@ -453,7 +453,7 @@ fn writeTomlString(out: *std.io.Writer, value: []const u8) std.io.Writer.Error!v
 const testing = std.testing;
 
 fn serializeToString(value: anytype) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, testing.allocator);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

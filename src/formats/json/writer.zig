@@ -1,13 +1,13 @@
 const std = @import("std");
 
 /// Write a JSON-escaped string (including surrounding quotes) to the writer.
-pub fn writeJsonString(writer: *std.io.Writer, value: []const u8) std.io.Writer.Error!void {
+pub fn writeJsonString(writer: *std.Io.Writer, value: []const u8) std.Io.Writer.Error!void {
     try writer.writeByte('"');
     try writeJsonStringContents(writer, value);
     try writer.writeByte('"');
 }
 
-fn writeJsonStringContents(writer: *std.io.Writer, value: []const u8) std.io.Writer.Error!void {
+fn writeJsonStringContents(writer: *std.Io.Writer, value: []const u8) std.Io.Writer.Error!void {
     var start: usize = 0;
     for (value, 0..) |c, i| {
         const escape: ?[]const u8 = switch (c) {
@@ -42,7 +42,7 @@ fn writeJsonStringContents(writer: *std.io.Writer, value: []const u8) std.io.Wri
 const testing = std.testing;
 
 fn testEscape(input: []const u8, expected: []const u8) !void {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     try writeJsonString(&aw.writer, input);
     const result = try aw.toOwnedSlice();
     defer testing.allocator.free(result);

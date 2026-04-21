@@ -38,7 +38,7 @@ pub fn main() !void {
     defer arena.deinit();
 
     std.debug.print("=== Streaming read (warn + err only) ===\n", .{});
-    var reader: std.io.Reader = .fixed(ndjson_buf.items);
+    var reader: std.Io.Reader = .fixed(ndjson_buf.items);
     var sd = serde.helpers.StreamingDeserializer(LogEntry).init(arena.allocator(), &reader);
     defer sd.deinit();
 

@@ -13,7 +13,7 @@ pub fn Serializer(comptime _map: anytype) type {
     return struct {
         const Self = @This();
 
-        out: *std.io.Writer,
+        out: *std.Io.Writer,
         depth: u32 = 0,
         options: Options,
 
@@ -25,7 +25,7 @@ pub fn Serializer(comptime _map: anytype) type {
         pub const Error = SerializeError;
         pub const oob_map = _map;
 
-        pub fn init(out: *std.io.Writer, opts: Options) Self {
+        pub fn init(out: *std.Io.Writer, opts: Options) Self {
             return .{ .out = out, .options = opts };
         }
 
@@ -205,7 +205,7 @@ pub fn ArraySerializer(comptime _map: anytype) type {
 const testing = std.testing;
 
 fn serializeToString(value: anytype, opts: Options) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer(.{}).init(&aw.writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

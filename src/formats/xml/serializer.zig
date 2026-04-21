@@ -14,13 +14,13 @@ pub const Options = struct {
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
 pub const Serializer = struct {
-    out: *std.io.Writer,
+    out: *std.Io.Writer,
     depth: u32 = 0,
     options: Options,
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *std.io.Writer, opts: Options) Serializer {
+    pub fn init(out: *std.Io.Writer, opts: Options) Serializer {
         return .{ .out = out, .options = opts };
     }
 
@@ -244,7 +244,7 @@ pub const ArraySerializer = struct {
 const testing = std.testing;
 
 fn serializeToString(value: anytype, opts: Options) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

@@ -7,13 +7,13 @@ const Dialect = scanner_mod.Dialect;
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
 pub const Serializer = struct {
-    out: *std.io.Writer,
+    out: *std.Io.Writer,
     dialect: Dialect,
     first_field: bool,
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *std.io.Writer, dialect: Dialect) Serializer {
+    pub fn init(out: *std.Io.Writer, dialect: Dialect) Serializer {
         return .{ .out = out, .dialect = dialect, .first_field = true };
     }
 
@@ -165,7 +165,7 @@ fn needsQuoting(value: []const u8, dialect: Dialect) bool {
 const testing = std.testing;
 
 fn serializeToString(value: anytype, dialect: Dialect) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, dialect);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

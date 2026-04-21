@@ -29,7 +29,7 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 
 /// Serialize a slice of structs to CSV with a specific dialect.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, dialect: Dialect) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
+    var aw: std.Io.Writer.Allocating = .init(allocator);
     try toWriterWith(&aw.writer, value, dialect);
     return aw.toOwnedSlice();
 }
@@ -49,12 +49,12 @@ pub fn toSliceAllocWith(allocator: std.mem.Allocator, value: anytype, dialect: D
 }
 
 /// Serialize a slice of structs to a writer in CSV format with the default dialect.
-pub fn toWriter(writer: *std.io.Writer, value: anytype) !void {
+pub fn toWriter(writer: *std.Io.Writer, value: anytype) !void {
     return toWriterWith(writer, value, .{});
 }
 
 /// Serialize a slice of structs to a writer in CSV format with a specific dialect.
-pub fn toWriterWith(writer: *std.io.Writer, value: anytype, dialect: Dialect) !void {
+pub fn toWriterWith(writer: *std.Io.Writer, value: anytype, dialect: Dialect) !void {
     const T = @TypeOf(value);
     const ElemType = comptime getStructElem(T);
 
@@ -77,18 +77,18 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 
 /// Serialize a slice of structs to CSV with a specific dialect and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, dialect: Dialect, comptime schema: anytype) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
+    var aw: std.Io.Writer.Allocating = .init(allocator);
     try toWriterWithSchema(&aw.writer, value, dialect, schema);
     return aw.toOwnedSlice();
 }
 
 /// Serialize a slice of structs to a writer with an external schema.
-pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+pub fn toWriterSchema(writer: *std.Io.Writer, value: anytype, comptime schema: anytype) !void {
     return toWriterWithSchema(writer, value, .{}, schema);
 }
 
 /// Serialize a slice of structs to a writer with a specific dialect and an external schema.
-pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, dialect: Dialect, comptime schema: anytype) !void {
+pub fn toWriterWithSchema(writer: *std.Io.Writer, value: anytype, dialect: Dialect, comptime schema: anytype) !void {
     const T = @TypeOf(value);
     const ElemType = comptime getStructElem(T);
 
@@ -154,7 +154,7 @@ pub fn fromSliceWithSchema(comptime T: type, allocator: std.mem.Allocator, input
 }
 
 /// Deserialize CSV from a reader with an external schema.
-pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime schema: anytype) !T {
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.Io.Reader, comptime schema: anytype) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSliceSchema(T, allocator, buf, schema);
@@ -248,7 +248,7 @@ fn getStructElem(comptime T: type) type {
 }
 
 /// Deserialize CSV into a slice of structs from a reader with the default dialect.
-pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader) !T {
+pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.Io.Reader) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSlice(T, allocator, buf);
@@ -333,8 +333,8 @@ pub fn streamingDeserializerWith(comptime T: type, allocator: std.mem.Allocator,
     return StreamingDeserializer(T).init(allocator, input, dialect);
 }
 
-fn readAll(allocator: std.mem.Allocator, reader: *std.io.Reader) ![]u8 {
-    return reader.allocRemaining(allocator, std.io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
+fn readAll(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]u8 {
+    return reader.allocRemaining(allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
 }
 
 const CoreValue = @import("../../core/value.zig").Value;
@@ -556,7 +556,7 @@ test "BOM handling" {
 test "toWriter" {
     const Row = struct { x: i32, y: i32 };
     const data: []const Row = &.{.{ .x = 1, .y = 2 }};
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
     try toWriter(&aw.writer, data);
     const bytes = try aw.toOwnedSlice();
     defer testing.allocator.free(bytes);
@@ -584,7 +584,7 @@ test "toValue and fromValue" {
 test "fromReader" {
     const Row = struct { x: i32 };
     const input = "x\n42\n";
-    var reader: std.io.Reader = .fixed(input);
+    var reader: std.Io.Reader = .fixed(input);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const result = try fromReader([]const Row, arena.allocator(), &reader);

@@ -35,14 +35,14 @@ pub const Value = union(enum) {
                     entry.value_ptr.deinit(allocator);
                 }
                 var mut: Mapping = m.*;
-                mut.deinit();
+                mut.deinit(allocator);
             },
             .null_val, .boolean, .integer, .float => {},
         }
     }
 };
 
-pub const Mapping = std.StringArrayHashMap(Value);
+pub const Mapping = std.array_hash_map.String(Value);
 
 /// Parse YAML input into a Value tree.
 pub fn parse(allocator: Allocator, input: []const u8) ParseError!Value {
@@ -194,7 +194,7 @@ const Parser = struct {
     }
 
     fn parseBlockMapping(self: *Parser, min_indent: i32) ParseError!Value {
-        var map = Mapping.init(self.allocator);
+        var map: Mapping = .empty;
         errdefer freeMapping(self.allocator, &map);
 
         while (self.pos < self.input.len) {
@@ -244,7 +244,7 @@ const Parser = struct {
                 if (value == .mapping) {
                     var it = value.mapping.iterator();
                     while (it.next()) |entry| {
-                        const gop = map.getOrPut(entry.key_ptr.*) catch return error.OutOfMemory;
+                        const gop = map.getOrPut(self.allocator, entry.key_ptr.*) catch return error.OutOfMemory;
                         if (!gop.found_existing) {
                             const key_copy = self.allocator.dupe(u8, entry.key_ptr.*) catch return error.OutOfMemory;
                             gop.key_ptr.* = key_copy;
@@ -257,7 +257,7 @@ const Parser = struct {
                 }
             }
 
-            const gop = map.getOrPut(key) catch return error.OutOfMemory;
+            const gop = map.getOrPut(self.allocator, key) catch return error.OutOfMemory;
             if (gop.found_existing) {
                 self.allocator.free(key);
                 gop.value_ptr.deinit(self.allocator);
@@ -365,7 +365,7 @@ const Parser = struct {
         self.pos += 1; // skip '{'
         self.skipWhitespaceAndComments();
 
-        var map = Mapping.init(self.allocator);
+        var map: Mapping = .empty;
         errdefer freeMapping(self.allocator, &map);
 
         if (self.pos < self.input.len and self.input[self.pos] == '}') {
@@ -400,7 +400,7 @@ const Parser = struct {
 
             const value = try self.parseFlowValue();
 
-            const gop = map.getOrPut(key) catch return error.OutOfMemory;
+            const gop = map.getOrPut(self.allocator, key) catch return error.OutOfMemory;
             if (gop.found_existing) {
                 self.allocator.free(key);
                 gop.value_ptr.deinit(self.allocator);
@@ -471,7 +471,7 @@ const Parser = struct {
             if (ch == ':' or ch == ',' or ch == '}' or ch == ']' or ch == '{' or ch == '[' or ch == '\n' or ch == '\r') break;
             self.pos += 1;
         }
-        const raw = std.mem.trimRight(u8, self.input[start..self.pos], " \t");
+        const raw = std.mem.trimEnd(u8, self.input[start..self.pos], " \t");
         return self.allocator.dupe(u8, raw) catch return error.OutOfMemory;
     }
 
@@ -507,7 +507,7 @@ const Parser = struct {
             }
             self.pos += 1;
         }
-        const raw = std.mem.trimRight(u8, self.input[start..self.pos], " \t");
+        const raw = std.mem.trimEnd(u8, self.input[start..self.pos], " \t");
         return resolveScalarType(raw, .plain);
     }
 
@@ -703,7 +703,7 @@ const Parser = struct {
             if (ch == '\n' or ch == '\r') break;
             self.pos += 1;
         }
-        const raw = std.mem.trimRight(u8, self.input[start..self.pos], " \t");
+        const raw = std.mem.trimEnd(u8, self.input[start..self.pos], " \t");
         return self.allocator.dupe(u8, raw) catch return error.OutOfMemory;
     }
 
@@ -782,12 +782,12 @@ const Parser = struct {
                 return .{ .sequence = items };
             },
             .mapping => |*m| {
-                var map = Mapping.init(self.allocator);
+                var map: Mapping = .empty;
                 var it = m.iterator();
                 while (it.next()) |entry| {
                     const k = self.allocator.dupe(u8, entry.key_ptr.*) catch return error.OutOfMemory;
                     const v = try self.deepClone(entry.value_ptr, depth + 1);
-                    map.put(k, v) catch return error.OutOfMemory;
+                    map.put(self.allocator, k, v) catch return error.OutOfMemory;
                 }
                 return .{ .mapping = map };
             },
@@ -883,7 +883,7 @@ const Parser = struct {
     /// Needed for sequence-inline mappings where the first key is on the same
     /// line as "- " and currentIndent() returns the line indent, not content column.
     fn parseBlockMappingAtCol(self: *Parser, content_col: i32) ParseError!Value {
-        var map = Mapping.init(self.allocator);
+        var map: Mapping = .empty;
         errdefer freeMapping(self.allocator, &map);
 
         var first = true;
@@ -938,7 +938,7 @@ const Parser = struct {
                 if (value == .mapping) {
                     var it = value.mapping.iterator();
                     while (it.next()) |entry| {
-                        const gop = map.getOrPut(entry.key_ptr.*) catch return error.OutOfMemory;
+                        const gop = map.getOrPut(self.allocator, entry.key_ptr.*) catch return error.OutOfMemory;
                         if (!gop.found_existing) {
                             const key_copy = self.allocator.dupe(u8, entry.key_ptr.*) catch return error.OutOfMemory;
                             gop.key_ptr.* = key_copy;
@@ -951,7 +951,7 @@ const Parser = struct {
                 }
             }
 
-            const gop = map.getOrPut(key) catch return error.OutOfMemory;
+            const gop = map.getOrPut(self.allocator, key) catch return error.OutOfMemory;
             if (gop.found_existing) {
                 self.allocator.free(key);
                 gop.value_ptr.deinit(self.allocator);
@@ -1040,7 +1040,7 @@ fn freeMapping(allocator: Allocator, map: *Mapping) void {
         allocator.free(entry.key_ptr.*);
         entry.value_ptr.deinit(allocator);
     }
-    map.deinit();
+    map.deinit(allocator);
 }
 
 fn isWhitespaceOrBreak(c: u8) bool {

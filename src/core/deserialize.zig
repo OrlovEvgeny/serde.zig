@@ -83,7 +83,7 @@ fn deserializeEnumSchema(comptime T: type, allocator: Allocator, deserializer: a
     if (comptime opts.getEnumReprSchema(T, schema) == .integer) {
         const tag_type = @typeInfo(T).@"enum".tag_type;
         const int_val = try deserializer.deserializeInt(tag_type);
-        return std.meta.intToEnum(T, int_val) catch
+        return std.enums.fromInt(T, int_val) orelse
             return deserializer.raiseError(error.UnexpectedToken);
     }
     // No rename/alias: let the format handle it directly.

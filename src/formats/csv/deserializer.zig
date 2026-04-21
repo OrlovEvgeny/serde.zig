@@ -150,7 +150,7 @@ fn parseField(comptime T: type, field: Field, allocator: Allocator) DeserializeE
             if (comptime opts.getEnumRepr(T) == .integer) {
                 const tag_type = @typeInfo(T).@"enum".tag_type;
                 const int_val = std.fmt.parseInt(tag_type, trimmed, 10) catch return error.InvalidNumber;
-                return std.meta.intToEnum(T, int_val) catch return error.UnexpectedToken;
+                return std.enums.fromInt(T, int_val) orelse return error.UnexpectedToken;
             }
             inline for (@typeInfo(T).@"enum".fields) |f| {
                 if (std.mem.eql(u8, trimmed, f.name))

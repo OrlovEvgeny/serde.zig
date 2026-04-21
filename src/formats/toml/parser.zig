@@ -34,17 +34,15 @@ pub const Value = union(enum) {
                     allocator.free(entry.key_ptr.*);
                     entry.value_ptr.deinit(allocator);
                 }
-                // StringArrayHashMap stores keys/values in managed memory.
-                // We need a mutable copy to call deinit.
                 var mut: Table = t.*;
-                mut.deinit();
+                mut.deinit(allocator);
             },
             .boolean, .integer, .float => {},
         }
     }
 };
 
-pub const Table = std.StringArrayHashMap(Value);
+pub const Table = std.array_hash_map.String(Value);
 
 pub fn parse(allocator: Allocator, input: []const u8) ParseError!Table {
     var p = Parser{
@@ -61,7 +59,7 @@ const Parser = struct {
     allocator: Allocator,
 
     fn parseDocument(self: *Parser) ParseError!Table {
-        var root = Table.init(self.allocator);
+        var root: Table = .empty;
         errdefer freeTable(self.allocator, &root);
 
         while (self.pos < self.input.len) {
@@ -106,21 +104,21 @@ const Parser = struct {
             defer self.allocator.free(segment);
             if (i == path.len - 1) {
                 // Last segment: create or get the table.
-                const gop = target.getOrPut(segment) catch return error.OutOfMemory;
+                const gop = target.getOrPut(self.allocator, segment) catch return error.OutOfMemory;
                 if (gop.found_existing) {
                     if (gop.value_ptr.* != .table) return error.DuplicateKey;
                 } else {
                     const key_copy = self.allocator.dupe(u8, segment) catch return error.OutOfMemory;
                     gop.key_ptr.* = key_copy;
-                    gop.value_ptr.* = .{ .table = Table.init(self.allocator) };
+                    gop.value_ptr.* = .{ .table = .empty };
                 }
                 target = &gop.value_ptr.table;
             } else {
-                const gop = target.getOrPut(segment) catch return error.OutOfMemory;
+                const gop = target.getOrPut(self.allocator, segment) catch return error.OutOfMemory;
                 if (!gop.found_existing) {
                     const key_copy = self.allocator.dupe(u8, segment) catch return error.OutOfMemory;
                     gop.key_ptr.* = key_copy;
-                    gop.value_ptr.* = .{ .table = Table.init(self.allocator) };
+                    gop.value_ptr.* = .{ .table = .empty };
                 }
                 if (gop.value_ptr.* != .table) return error.DuplicateKey;
                 target = &gop.value_ptr.table;
@@ -160,7 +158,7 @@ const Parser = struct {
             defer self.allocator.free(segment);
             if (i == path.len - 1) {
                 // Last segment: append a new table to the array.
-                const gop = target.getOrPut(segment) catch return error.OutOfMemory;
+                const gop = target.getOrPut(self.allocator, segment) catch return error.OutOfMemory;
                 if (!gop.found_existing) {
                     const key_copy = self.allocator.dupe(u8, segment) catch return error.OutOfMemory;
                     gop.key_ptr.* = key_copy;
@@ -169,7 +167,7 @@ const Parser = struct {
                 if (gop.value_ptr.* != .array) return error.DuplicateKey;
 
                 // Append a new table to the array.
-                var new_table = Table.init(self.allocator);
+                var new_table: Table = .empty;
 
                 // Parse key-value pairs into the new table.
                 while (self.pos < self.input.len) {
@@ -191,11 +189,11 @@ const Parser = struct {
                 if (old.len > 0) self.allocator.free(old);
                 gop.value_ptr.* = .{ .array = new_arr };
             } else {
-                const gop = target.getOrPut(segment) catch return error.OutOfMemory;
+                const gop = target.getOrPut(self.allocator, segment) catch return error.OutOfMemory;
                 if (!gop.found_existing) {
                     const key_copy = self.allocator.dupe(u8, segment) catch return error.OutOfMemory;
                     gop.key_ptr.* = key_copy;
-                    gop.value_ptr.* = .{ .table = Table.init(self.allocator) };
+                    gop.value_ptr.* = .{ .table = .empty };
                 }
                 switch (gop.value_ptr.*) {
                     .table => {
@@ -235,18 +233,18 @@ const Parser = struct {
         // Navigate dotted key path, creating intermediate tables.
         var target = table;
         for (path[0 .. path.len - 1]) |segment| {
-            const gop = target.getOrPut(segment) catch return error.OutOfMemory;
+            const gop = target.getOrPut(self.allocator, segment) catch return error.OutOfMemory;
             if (!gop.found_existing) {
                 const key_copy = self.allocator.dupe(u8, segment) catch return error.OutOfMemory;
                 gop.key_ptr.* = key_copy;
-                gop.value_ptr.* = .{ .table = Table.init(self.allocator) };
+                gop.value_ptr.* = .{ .table = .empty };
             }
             if (gop.value_ptr.* != .table) return error.DuplicateKey;
             target = &gop.value_ptr.table;
         }
 
         const final_key = path[path.len - 1];
-        const gop = target.getOrPut(final_key) catch return error.OutOfMemory;
+        const gop = target.getOrPut(self.allocator, final_key) catch return error.OutOfMemory;
         if (gop.found_existing) return error.DuplicateKey;
         const key_copy = self.allocator.dupe(u8, final_key) catch return error.OutOfMemory;
         gop.key_ptr.* = key_copy;
@@ -664,7 +662,7 @@ const Parser = struct {
 
     fn parseInlineTable(self: *Parser) ParseError!Value {
         self.pos += 1; // skip '{'
-        var table = Table.init(self.allocator);
+        var table: Table = .empty;
         errdefer freeTable(self.allocator, &table);
 
         self.skipWhitespace();
@@ -707,18 +705,18 @@ const Parser = struct {
 
         var target = table;
         for (path[0 .. path.len - 1]) |segment| {
-            const gop = target.getOrPut(segment) catch return error.OutOfMemory;
+            const gop = target.getOrPut(self.allocator, segment) catch return error.OutOfMemory;
             if (!gop.found_existing) {
                 const key_copy = self.allocator.dupe(u8, segment) catch return error.OutOfMemory;
                 gop.key_ptr.* = key_copy;
-                gop.value_ptr.* = .{ .table = Table.init(self.allocator) };
+                gop.value_ptr.* = .{ .table = .empty };
             }
             if (gop.value_ptr.* != .table) return error.DuplicateKey;
             target = &gop.value_ptr.table;
         }
 
         const final_key = path[path.len - 1];
-        const gop = target.getOrPut(final_key) catch return error.OutOfMemory;
+        const gop = target.getOrPut(self.allocator, final_key) catch return error.OutOfMemory;
         if (gop.found_existing) return error.DuplicateKey;
         const key_copy = self.allocator.dupe(u8, final_key) catch return error.OutOfMemory;
         gop.key_ptr.* = key_copy;
@@ -770,7 +768,7 @@ fn freeTable(allocator: Allocator, table: *Table) void {
         allocator.free(entry.key_ptr.*);
         entry.value_ptr.deinit(allocator);
     }
-    table.deinit();
+    table.deinit(allocator);
 }
 
 fn isBareKeyChar(c: u8) bool {
