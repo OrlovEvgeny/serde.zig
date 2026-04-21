@@ -175,7 +175,11 @@ fn freeAllocated(comptime T: type, value: T, allocator: Allocator) void {
         .optional => if (value) |v| freeAllocated(@typeInfo(T).optional.child, v, allocator),
         .map => {
             var mut = value;
-            mut.deinit();
+            if (comptime kind_mod.isMapManaged(T)) {
+                mut.deinit();
+            } else {
+                mut.deinit(allocator);
+            }
         },
         else => {},
     }
