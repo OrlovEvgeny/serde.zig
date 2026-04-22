@@ -17,6 +17,7 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
         with:
+          # Releases are cut from the stable compatibility target documented in README.md.
           version: 0.15.2
 
       - name: Run tests
