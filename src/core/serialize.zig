@@ -1,6 +1,7 @@
 const std = @import("std");
 const kind_mod = @import("kind.zig");
 const options = @import("options.zig");
+const compat = @import("../compat.zig");
 
 const Kind = kind_mod.Kind;
 const Child = kind_mod.Child;
@@ -287,7 +288,7 @@ const TestEvent = union(enum) {
 const SerError = error{OutOfMemory};
 
 const MockSerializer = struct {
-    events: std.ArrayList(TestEvent) = .empty,
+    events: compat.ArrayList(TestEvent) = .empty,
     alloc: std.mem.Allocator,
 
     pub const Error = SerError;

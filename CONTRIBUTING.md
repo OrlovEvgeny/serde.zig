@@ -4,7 +4,7 @@ Thank you for your interest in contributing! This document covers the basics.
 
 ## Development Setup
 
-You need [Zig 0.15.0](https://ziglang.org/download/) or later.
+You need [Zig 0.15.2](https://ziglang.org/download/) or later. CI additionally runs against `master` as a non-blocking signal; see the Compatibility section of the README.
 
 ```sh
 git clone https://github.com/OrlovEvgeny/serde.zig.git

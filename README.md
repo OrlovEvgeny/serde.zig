@@ -13,6 +13,7 @@ Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zi
 - [Why serde.zig?](#why-serdezig)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
+- [Compatibility](#compatibility)
 - [Formats](#formats)
 - [Supported Types](#supported-types)
 - [Examples](#examples)
@@ -106,7 +107,17 @@ const serde_dep = b.dependency("serde", .{
 exe.root_module.addImport("serde", serde_dep.module("serde"));
 ```
 
-Requires Zig 0.15.0 or later.
+Requires Zig 0.15.2 or later. See [Compatibility](#compatibility).
+
+## Compatibility
+
+| serde.zig | Zig stable | Zig master |
+|-----------|------------|------------|
+| 1.0.x | 0.15.2 | tracked, non-blocking |
+
+**Policy.** serde.zig ships against the stable Zig release it currently supports and tracks `master` in CI as a signal. Today, `1.0.x` is pinned to Zig `0.15.2`; `master` failures are visible in CI but do not block merges. When a new Zig major is adopted, serde.zig cuts a `release/0.15.x` backport branch and the new Zig line ships as a new serde.zig major.
+
+Bump the `.minimum_zig_version` entry in your own `build.zig.zon` to match your target Zig version (currently `0.15.2`).
 
 ## Formats
 

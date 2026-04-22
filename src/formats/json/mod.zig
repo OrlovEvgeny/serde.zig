@@ -5,6 +5,7 @@
 //! zero-copy borrowed deserialization, and streaming output.
 
 const std = @import("std");
+const compat = @import("../../compat.zig");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");
 const core_serialize = @import("../../core/serialize.zig");
@@ -23,19 +24,19 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 
 /// Serialize with explicit options.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
+    var aw: compat.AllocatingWriter = .init(allocator);
     var ser = Serializer(.{}).init(&aw.writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in JSON format.
-pub fn toWriter(writer: *std.io.Writer, value: anytype) !void {
+pub fn toWriter(writer: *compat.Writer, value: anytype) !void {
     return toWriterWith(writer, value, .{});
 }
 
 /// Serialize with explicit options to a writer.
-pub fn toWriterWith(writer: *std.io.Writer, value: anytype, opts: Options) !void {
+pub fn toWriterWith(writer: *compat.Writer, value: anytype, opts: Options) !void {
     var ser = Serializer(.{}).init(writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
 }
@@ -63,19 +64,19 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 
 /// Serialize with explicit options and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opts: Options, comptime schema: anytype) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
+    var aw: compat.AllocatingWriter = .init(allocator);
     var ser = Serializer(.{}).init(&aw.writer, opts);
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in JSON format with an external schema.
-pub fn toWriterSchema(writer: *std.io.Writer, value: anytype, comptime schema: anytype) !void {
+pub fn toWriterSchema(writer: *compat.Writer, value: anytype, comptime schema: anytype) !void {
     return toWriterWithSchema(writer, value, .{}, schema);
 }
 
 /// Serialize with explicit options to a writer with an external schema.
-pub fn toWriterWithSchema(writer: *std.io.Writer, value: anytype, opts: Options, comptime schema: anytype) !void {
+pub fn toWriterWithSchema(writer: *compat.Writer, value: anytype, opts: Options, comptime schema: anytype) !void {
     var ser = Serializer(.{}).init(writer, opts);
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
 }
@@ -97,7 +98,7 @@ pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, i
 }
 
 /// Deserialize from a reader with an external schema.
-pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime schema: anytype) !T {
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Reader, comptime schema: anytype) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSliceSchema(T, allocator, buf, schema);
@@ -106,7 +107,7 @@ pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: 
 pub const PrettyOptions = struct { indent: u8 = 2 };
 
 /// Serialize a value as pretty-printed JSON to a writer.
-pub fn toPrettyWriter(writer: *std.io.Writer, value: anytype, opts: PrettyOptions) !void {
+pub fn toPrettyWriter(writer: *compat.Writer, value: anytype, opts: PrettyOptions) !void {
     return toWriterWith(writer, value, .{ .pretty = true, .indent = opts.indent });
 }
 
@@ -132,7 +133,7 @@ pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: 
 
 /// Deserialize a value of type T from a reader.
 /// Reads all input into a buffer, then deserializes. Use an ArenaAllocator for easy cleanup.
-pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader) !T {
+pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Reader) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSlice(T, allocator, buf);
@@ -140,9 +141,9 @@ pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.i
 
 /// Deserialize a value of type T from a file path.
 pub fn fromFilePath(comptime T: type, allocator: std.mem.Allocator, path: []const u8) !T {
-    const file = try std.fs.cwd().openFile(path, .{});
+    var file = try compat.openFileForRead(std.fs.cwd(), path);
     defer file.close();
-    const content = try file.reader().readAllAlloc(allocator, 10 * 1024 * 1024);
+    const content = try compat.readFileAllAlloc(&file, allocator, 10 * 1024 * 1024);
     defer allocator.free(content);
     return fromSlice(T, allocator, content);
 }
@@ -152,8 +153,8 @@ fn checkTrailingData(deser: *Deserializer) !void {
     if (deser.scanner.pos != deser.scanner.input.len) return error.TrailingData;
 }
 
-fn readAll(allocator: std.mem.Allocator, reader: *std.io.Reader) ![]u8 {
-    return reader.allocRemaining(allocator, std.io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
+fn readAll(allocator: std.mem.Allocator, reader: *compat.Reader) ![]u8 {
+    return compat.readerAllocRemaining(reader, allocator, compat.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
 }
 
 const CoreValue = @import("../../core/value.zig").Value;
@@ -173,14 +174,14 @@ pub fn fromValue(comptime T: type, allocator: std.mem.Allocator, value: CoreValu
 /// Serialize a value to a JSON byte slice with out-of-band type overrides.
 /// Map is a tuple of `.{ .{ Type, Adapter }, ... }`.
 pub fn toSliceWithMap(allocator: std.mem.Allocator, value: anytype, comptime map: anytype) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
+    var aw: compat.AllocatingWriter = .init(allocator);
     var ser = Serializer(map).init(&aw.writer, .{});
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, {}, map);
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in JSON format with out-of-band type overrides.
-pub fn toWriterWithMap(writer: *std.io.Writer, value: anytype, comptime map: anytype) !void {
+pub fn toWriterWithMap(writer: *compat.Writer, value: anytype, comptime map: anytype) !void {
     var ser = Serializer(map).init(writer, .{});
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, {}, map);
 }
@@ -202,7 +203,7 @@ pub fn fromSliceBorrowedWithMap(comptime T: type, allocator: std.mem.Allocator, 
 }
 
 /// Deserialize from a reader with out-of-band type overrides.
-pub fn fromReaderWithMap(comptime T: type, allocator: std.mem.Allocator, reader: *std.io.Reader, comptime map: anytype) !T {
+pub fn fromReaderWithMap(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Reader, comptime map: anytype) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSliceWithMap(T, allocator, buf, map);
@@ -547,7 +548,7 @@ test "roundtrip struct with 'with' module (UnixTimestampMs)" {
 }
 
 test "toWriter API" {
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.AllocatingWriter = .init(testing.allocator);
     try toWriter(&aw.writer, @as(i32, 42));
     const bytes = aw.toOwnedSlice() catch unreachable;
     defer testing.allocator.free(bytes);
@@ -686,7 +687,7 @@ test "toSliceAlloc null-terminated" {
 
 test "toPrettyWriter" {
     const Point = struct { x: i32, y: i32 };
-    var aw: std.io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.AllocatingWriter = .init(testing.allocator);
     try toPrettyWriter(&aw.writer, Point{ .x = 1, .y = 2 }, .{});
     const bytes = try aw.toOwnedSlice();
     defer testing.allocator.free(bytes);
@@ -706,7 +707,7 @@ test "toValue and fromValue" {
 test "fromReader" {
     const Point = struct { x: i32, y: i32 };
     const input = "{\"x\":1,\"y\":2}";
-    var reader: std.io.Reader = .fixed(input);
+    var reader: compat.Reader = compat.readerFixed(input);
     const val = try fromReader(Point, testing.allocator, &reader);
     try testing.expectEqual(@as(i32, 1), val.x);
     try testing.expectEqual(@as(i32, 2), val.y);

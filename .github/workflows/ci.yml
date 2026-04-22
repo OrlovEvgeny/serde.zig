@@ -8,28 +8,38 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: Test (${{ matrix.os }}, Zig ${{ matrix.zig }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        zig: ["0.15.2", "master"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - zig: master
+            experimental: true
     steps:
       - uses: actions/checkout@v4
 
       - uses: mlugg/setup-zig@v2
+        continue-on-error: ${{ matrix.experimental == true }}
         with:
-          version: 0.15.2
+          version: ${{ matrix.zig }}
 
       - name: Check formatting
+        continue-on-error: ${{ matrix.experimental == true }}
         run: zig fmt --check src/ build.zig
 
       - name: Build
+        continue-on-error: ${{ matrix.experimental == true }}
         run: zig build
 
       - name: Run tests
+        continue-on-error: ${{ matrix.experimental == true }}
         run: zig build test
 
       - name: Build fuzz targets
+        continue-on-error: ${{ matrix.experimental == true }}
         run: zig build fuzz
 
   docs:
