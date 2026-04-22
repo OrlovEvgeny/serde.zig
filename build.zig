@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const compat_source = switch (builtin.zig_version.minor) {
         15 => "src/compat.zig",
-        16 => "src/compat_0_16.zig",
+        16...std.math.maxInt(u32) => "src/compat_0_16.zig",
         else => @compileError("unsupported Zig minor version"),
     };
     const compat_mod = b.createModule(.{

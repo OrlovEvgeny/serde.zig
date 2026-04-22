@@ -3,8 +3,8 @@ const builtin = @import("builtin");
 
 comptime {
     const v = builtin.zig_version;
-    if (!(v.major == 0 and v.minor == 16)) {
-        @compileError("src/compat_0_16.zig requires Zig 0.16.x");
+    if (!(v.major == 0 and v.minor >= 16)) {
+        @compileError("src/compat_0_16.zig requires Zig 0.16+");
     }
 }
 
