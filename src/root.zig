@@ -25,6 +25,7 @@
 //! ```
 
 pub const core = @import("core/mod.zig");
+pub const compat = @import("compat.zig");
 pub const json = @import("formats/json/mod.zig");
 pub const msgpack = @import("formats/msgpack/mod.zig");
 pub const toml = @import("formats/toml/mod.zig");
@@ -68,6 +69,7 @@ test {
     _ = @import("helpers/timestamp.zig");
     _ = @import("helpers/base64.zig");
     _ = @import("helpers/streaming.zig");
+    _ = compat;
     _ = json;
     _ = @import("formats/json/writer.zig");
     _ = @import("formats/json/scanner.zig");

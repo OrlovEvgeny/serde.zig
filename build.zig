@@ -1,6 +1,14 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
+    const compat_source = switch (builtin.zig_version.minor) {
+        15 => "src/compat.zig",
+        // 16 => "src/compat_0_16.zig",
+        else => @compileError("unsupported Zig minor version"),
+    };
+    _ = compat_source;
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 

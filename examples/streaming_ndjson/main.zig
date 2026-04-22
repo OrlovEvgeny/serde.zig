@@ -22,7 +22,7 @@ pub fn main() !void {
         .{ .timestamp = 1700000005, .level = .info, .message = "Request processed in 12ms" },
     };
 
-    var ndjson_buf: std.ArrayList(u8) = .empty;
+    var ndjson_buf: serde.compat.ArrayList(u8) = .empty;
     defer ndjson_buf.deinit(allocator);
 
     for (entries) |entry| {
@@ -38,7 +38,7 @@ pub fn main() !void {
     defer arena.deinit();
 
     std.debug.print("=== Streaming read (warn + err only) ===\n", .{});
-    var reader: std.io.Reader = .fixed(ndjson_buf.items);
+    var reader: serde.compat.Reader = serde.compat.readerFixed(ndjson_buf.items);
     var sd = serde.helpers.StreamingDeserializer(LogEntry).init(arena.allocator(), &reader);
     defer sd.deinit();
 
