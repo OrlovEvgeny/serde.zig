@@ -1,5 +1,5 @@
 const std = @import("std");
-const compat = @import("../../compat.zig");
+const compat = @import("compat");
 const core_serialize = @import("../../core/serialize.zig");
 const kind_mod = @import("../../core/kind.zig");
 const options = @import("../../core/options.zig");
@@ -16,7 +16,7 @@ pub const Options = struct {
 };
 
 pub const Serializer = struct {
-    out: *compat.Writer,
+    out: *compat.Io.Writer,
     depth: u32,
     indent_size: u8,
     is_map_value: bool,
@@ -24,11 +24,11 @@ pub const Serializer = struct {
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *compat.Writer) Serializer {
+    pub fn init(out: *compat.Io.Writer) Serializer {
         return initWith(out, .{});
     }
 
-    pub fn initWith(out: *compat.Writer, opts: Options) Serializer {
+    pub fn initWith(out: *compat.Io.Writer, opts: Options) Serializer {
         return .{ .out = out, .depth = 0, .indent_size = opts.indent, .is_map_value = false, .opts = opts };
     }
 
@@ -100,7 +100,7 @@ pub const Serializer = struct {
 };
 
 pub const StructSerializer = struct {
-    out: *compat.Writer,
+    out: *compat.Io.Writer,
     depth: u32,
     indent_size: u8,
     is_map_value: bool,
@@ -246,7 +246,7 @@ pub const StructSerializer = struct {
 };
 
 pub const ArraySerializer = struct {
-    out: *compat.Writer,
+    out: *compat.Io.Writer,
     depth: u32,
     indent_size: u8,
     is_map_value: bool,
@@ -411,7 +411,7 @@ fn looksLikeNumber(value: []const u8) bool {
     return true;
 }
 
-fn writeDoubleQuoted(out: *compat.Writer, value: []const u8) compat.Writer.Error!void {
+fn writeDoubleQuoted(out: *compat.Io.Writer, value: []const u8) compat.Io.Writer.Error!void {
     try out.writeByte('"');
     for (value) |c| {
         switch (c) {
@@ -432,7 +432,7 @@ fn writeDoubleQuoted(out: *compat.Writer, value: []const u8) compat.Writer.Error
     try out.writeByte('"');
 }
 
-fn writeYamlKey(out: *compat.Writer, key: []const u8) compat.Writer.Error!void {
+fn writeYamlKey(out: *compat.Io.Writer, key: []const u8) compat.Io.Writer.Error!void {
     if (needsQuoting(key)) {
         try writeDoubleQuoted(out, key);
     } else {
@@ -440,7 +440,7 @@ fn writeYamlKey(out: *compat.Writer, key: []const u8) compat.Writer.Error!void {
     }
 }
 
-fn writeIndent(out: *compat.Writer, depth: u32, indent_size: u8) compat.Writer.Error!void {
+fn writeIndent(out: *compat.Io.Writer, depth: u32, indent_size: u8) compat.Io.Writer.Error!void {
     const total = depth * indent_size;
     for (0..total) |_| {
         try out.writeByte(' ');
@@ -450,7 +450,7 @@ fn writeIndent(out: *compat.Writer, depth: u32, indent_size: u8) compat.Writer.E
 const testing = std.testing;
 
 fn serializeToString(value: anytype) ![]u8 {
-    var aw: compat.AllocatingWriter = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

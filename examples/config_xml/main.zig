@@ -21,15 +21,13 @@ const AppConfig = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
-    const file = try std.fs.cwd().openFile("examples/config_xml/config.xml", .{});
-    defer file.close();
+    const file = try serde.compat.openFileForRead("examples/config_xml/config.xml");
+    defer serde.compat.closeFile(file);
     var file_buf: [65536]u8 = undefined;
-    var file_reader = file.readerStreaming(&file_buf);
-    const xml_input = try file_reader.interface.allocRemaining(allocator, .unlimited);
+    var file_reader = serde.compat.fileReaderStreaming(file, &file_buf);
+    const xml_input = try serde.compat.readerAllocRemaining(&file_reader, allocator, .unlimited);
     defer allocator.free(xml_input);
 
     var arena = std.heap.ArenaAllocator.init(allocator);

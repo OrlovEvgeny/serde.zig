@@ -1,14 +1,14 @@
 const std = @import("std");
-const compat = @import("../../compat.zig");
+const compat = @import("compat");
 
 /// Write a JSON-escaped string (including surrounding quotes) to the writer.
-pub fn writeJsonString(writer: *compat.Writer, value: []const u8) compat.Writer.Error!void {
+pub fn writeJsonString(writer: *compat.Io.Writer, value: []const u8) compat.Io.Writer.Error!void {
     try writer.writeByte('"');
     try writeJsonStringContents(writer, value);
     try writer.writeByte('"');
 }
 
-fn writeJsonStringContents(writer: *compat.Writer, value: []const u8) compat.Writer.Error!void {
+fn writeJsonStringContents(writer: *compat.Io.Writer, value: []const u8) compat.Io.Writer.Error!void {
     var start: usize = 0;
     for (value, 0..) |c, i| {
         const escape: ?[]const u8 = switch (c) {
@@ -43,7 +43,7 @@ fn writeJsonStringContents(writer: *compat.Writer, value: []const u8) compat.Wri
 const testing = std.testing;
 
 fn testEscape(input: []const u8, expected: []const u8) !void {
-    var aw: compat.AllocatingWriter = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     try writeJsonString(&aw.writer, input);
     const result = try aw.toOwnedSlice();
     defer testing.allocator.free(result);

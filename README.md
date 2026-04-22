@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/OrlovEvgeny/serde.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/OrlovEvgeny/serde.zig/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/OrlovEvgeny/serde.zig?label=release)](https://github.com/OrlovEvgeny/serde.zig/releases/latest)
-[![Zig](https://img.shields.io/badge/zig-0.15.2-blue)](https://ziglang.org/download/)
+[![Zig](https://img.shields.io/badge/zig-0.15.2%20%7C%200.16.0-blue)](https://ziglang.org/download/)
 
 Serialization framework for Zig
 
@@ -13,7 +13,6 @@ Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zi
 - [Why serde.zig?](#why-serdezig)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
-- [Compatibility](#compatibility)
 - [Formats](#formats)
 - [Supported Types](#supported-types)
 - [Examples](#examples)
@@ -107,17 +106,15 @@ const serde_dep = b.dependency("serde", .{
 exe.root_module.addImport("serde", serde_dep.module("serde"));
 ```
 
-Requires Zig 0.15.2 or later. See [Compatibility](#compatibility).
+Requires Zig 0.15.2 or 0.16.0.
 
-## Compatibility
+Supported Zig versions:
 
-| serde.zig | Zig stable | Zig master |
-|-----------|------------|------------|
-| 1.0.x | 0.15.2 | tracked, non-blocking |
-
-**Policy.** serde.zig ships against the stable Zig release it currently supports and tracks `master` in CI as a signal. Today, `1.0.x` is pinned to Zig `0.15.2`; `master` failures are visible in CI but do not block merges. When a new Zig major is adopted, serde.zig cuts a `release/0.15.x` backport branch and the new Zig line ships as a new serde.zig major.
-
-Bump the `.minimum_zig_version` entry in your own `build.zig.zon` to match your target Zig version (currently `0.15.2`).
+| Zig version | Status |
+|-------------|--------|
+| `0.16.0` | current stable, required in docs CI |
+| `0.15.2` | previous stable, fully supported |
+| `master` | tracked in CI as non-blocking signal |
 
 ## Formats
 

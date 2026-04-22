@@ -1,7 +1,7 @@
 const std = @import("std");
 const kind_mod = @import("kind.zig");
 const options = @import("options.zig");
-const compat = @import("../compat.zig");
+const compat = @import("compat");
 
 const Kind = kind_mod.Kind;
 const Child = kind_mod.Child;

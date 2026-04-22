@@ -1,5 +1,5 @@
 const std = @import("std");
-const compat = @import("../../compat.zig");
+const compat = @import("compat");
 const core_serialize = @import("../../core/serialize.zig");
 const kind_mod = @import("../../core/kind.zig");
 const options = @import("../../core/options.zig");
@@ -10,14 +10,14 @@ const Kind = kind_mod.Kind;
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
 pub const Serializer = struct {
-    out: *compat.Writer,
+    out: *compat.Io.Writer,
     allocator: Allocator,
     // Current section path (e.g., "server.db") for emitting [section] headers.
     path: []const []const u8,
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *compat.Writer, allocator: Allocator) Serializer {
+    pub fn init(out: *compat.Io.Writer, allocator: Allocator) Serializer {
         return .{ .out = out, .allocator = allocator, .path = &.{} };
     }
 
@@ -81,7 +81,7 @@ pub const Serializer = struct {
 };
 
 pub const StructSerializer = struct {
-    out: *compat.Writer,
+    out: *compat.Io.Writer,
     allocator: Allocator,
     path: []const []const u8,
     deferred: std.ArrayList(DeferredField),
@@ -167,7 +167,7 @@ pub const StructSerializer = struct {
     }
 
     fn deferSubTableDynamic(self: *StructSerializer, key: []const u8, value: anytype) Error!void {
-        var aw: compat.AllocatingWriter = .init(self.allocator);
+        var aw: compat.Io.Writer.Allocating = .init(self.allocator);
 
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
         @memcpy(new_path[0..self.path.len], self.path);
@@ -224,7 +224,7 @@ pub const StructSerializer = struct {
 
     fn deferSubTable(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime is_aot_entry: bool) Error!void {
         _ = is_aot_entry;
-        var aw: compat.AllocatingWriter = .init(self.allocator);
+        var aw: compat.Io.Writer.Allocating = .init(self.allocator);
 
         // Build the new path.
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
@@ -265,7 +265,7 @@ pub const StructSerializer = struct {
     }
 
     fn deferArrayOfTables(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
-        var aw: compat.AllocatingWriter = .init(self.allocator);
+        var aw: compat.Io.Writer.Allocating = .init(self.allocator);
 
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
         @memcpy(new_path[0..self.path.len], self.path);
@@ -307,7 +307,7 @@ pub const StructSerializer = struct {
 };
 
 pub const ArraySerializer = struct {
-    out: *compat.Writer,
+    out: *compat.Io.Writer,
     allocator: Allocator,
     first: bool,
 
@@ -409,7 +409,7 @@ fn isStructSlice(comptime T: type) bool {
     return false;
 }
 
-fn writeTomlKey(out: *compat.Writer, key: []const u8) compat.Writer.Error!void {
+fn writeTomlKey(out: *compat.Io.Writer, key: []const u8) compat.Io.Writer.Error!void {
     if (isBareKey(key)) {
         try out.writeAll(key);
     } else {
@@ -426,7 +426,7 @@ fn isBareKey(key: []const u8) bool {
     return true;
 }
 
-fn writeTomlString(out: *compat.Writer, value: []const u8) compat.Writer.Error!void {
+fn writeTomlString(out: *compat.Io.Writer, value: []const u8) compat.Io.Writer.Error!void {
     try out.writeByte('"');
     for (value) |c| {
         switch (c) {
@@ -454,7 +454,7 @@ fn writeTomlString(out: *compat.Writer, value: []const u8) compat.Writer.Error!v
 const testing = std.testing;
 
 fn serializeToString(value: anytype) ![]u8 {
-    var aw: compat.AllocatingWriter = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, testing.allocator);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

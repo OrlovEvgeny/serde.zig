@@ -4,7 +4,7 @@
 //! deserialize with `fromSlice` / `fromReader`.
 
 const std = @import("std");
-const compat = @import("../../compat.zig");
+const compat = @import("compat");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");
 const core_serialize = @import("../../core/serialize.zig");
@@ -15,7 +15,7 @@ pub const Deserializer = deserializer_mod.Deserializer;
 
 /// Serialize a value to a MessagePack byte slice. Caller owns the returned memory.
 pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
-    var aw: compat.AllocatingWriter = .init(allocator);
+    var aw: compat.Io.Writer.Allocating = .init(allocator);
     var ser = Serializer.init(&aw.writer, allocator);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
@@ -31,7 +31,7 @@ pub fn toSliceAlloc(allocator: std.mem.Allocator, value: anytype) ![:0]u8 {
 }
 
 /// Serialize a value to a writer in MessagePack format.
-pub fn toWriter(allocator: std.mem.Allocator, writer: *compat.Writer, value: anytype) !void {
+pub fn toWriter(allocator: std.mem.Allocator, writer: *compat.Io.Writer, value: anytype) !void {
     var ser = Serializer.init(writer, allocator);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
 }
@@ -40,14 +40,14 @@ pub fn toWriter(allocator: std.mem.Allocator, writer: *compat.Writer, value: any
 
 /// Serialize a value to a MessagePack byte slice with an external schema.
 pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
-    var aw: compat.AllocatingWriter = .init(allocator);
+    var aw: compat.Io.Writer.Allocating = .init(allocator);
     var ser = Serializer.init(&aw.writer, allocator);
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in MessagePack format with an external schema.
-pub fn toWriterSchema(allocator: std.mem.Allocator, writer: *compat.Writer, value: anytype, comptime schema: anytype) !void {
+pub fn toWriterSchema(allocator: std.mem.Allocator, writer: *compat.Io.Writer, value: anytype, comptime schema: anytype) !void {
     var ser = Serializer.init(writer, allocator);
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
 }
@@ -61,7 +61,7 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
 }
 
 /// Deserialize from a reader with an external schema.
-pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Reader, comptime schema: anytype) !T {
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Io.Reader, comptime schema: anytype) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSliceSchema(T, allocator, buf, schema);
@@ -77,7 +77,7 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 }
 
 /// Deserialize a value of type T from a reader.
-pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Reader) !T {
+pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Io.Reader) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSlice(T, allocator, buf);
@@ -85,15 +85,13 @@ pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *compa
 
 /// Deserialize a value of type T from a file path.
 pub fn fromFilePath(comptime T: type, allocator: std.mem.Allocator, path: []const u8) !T {
-    var file = try compat.openFileForRead(std.fs.cwd(), path);
-    defer file.close();
-    const content = try compat.readFileAllAlloc(&file, allocator, 10 * 1024 * 1024);
+    const content = try compat.readFileAlloc(allocator, path, 10 * 1024 * 1024);
     defer allocator.free(content);
     return fromSlice(T, allocator, content);
 }
 
-fn readAll(allocator: std.mem.Allocator, reader: *compat.Reader) ![]u8 {
-    return compat.readerAllocRemaining(reader, allocator, compat.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
+fn readAll(allocator: std.mem.Allocator, reader: *compat.Io.Reader) ![]u8 {
+    return reader.allocRemaining(allocator, compat.Io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
 }
 
 const CoreValue = @import("../../core/value.zig").Value;
@@ -403,7 +401,7 @@ test "roundtrip inf float" {
 }
 
 test "toWriter API" {
-    var aw: compat.AllocatingWriter = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     try toWriter(testing.allocator, &aw.writer, @as(i32, 42));
     const bytes = aw.toOwnedSlice() catch unreachable;
     defer testing.allocator.free(bytes);
@@ -412,7 +410,7 @@ test "toWriter API" {
 }
 
 test "binary data roundtrip" {
-    var aw: compat.AllocatingWriter = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     var ser = serializer_mod.Serializer.init(&aw.writer, testing.allocator);
     try ser.serializeBytes("binary\x00data");
     const bytes = aw.toOwnedSlice() catch unreachable;
@@ -456,7 +454,7 @@ test "toValue and fromValue" {
 test "fromReader" {
     const bytes = try toSlice(testing.allocator, @as(i32, 42));
     defer testing.allocator.free(bytes);
-    var reader: compat.Reader = compat.readerFixed(bytes);
+    var reader: compat.Io.Reader = .fixed(bytes);
     const val = try fromReader(i32, testing.allocator, &reader);
     try testing.expectEqual(@as(i32, 42), val);
 }

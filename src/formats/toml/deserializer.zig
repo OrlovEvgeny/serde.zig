@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 const parser_mod = @import("parser.zig");
 const core_deserialize = @import("../../core/deserialize.zig");
 
@@ -171,7 +172,7 @@ fn deserializeValue(comptime T: type, val: *const Value, allocator: Allocator) D
                 if (val.* != .integer) return error.WrongType;
                 const tag_type = @typeInfo(T).@"enum".tag_type;
                 const int_val = std.math.cast(tag_type, val.integer) orelse return error.Overflow;
-                return std.meta.intToEnum(T, int_val) catch return error.UnexpectedToken;
+                return compat.intToEnum(T, int_val) orelse return error.UnexpectedToken;
             }
             if (val.* != .string) return error.WrongType;
             inline for (@typeInfo(T).@"enum".fields) |field| {

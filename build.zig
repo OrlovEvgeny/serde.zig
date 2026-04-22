@@ -2,21 +2,25 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
-    const compat_source = switch (builtin.zig_version.minor) {
-        15 => "src/compat.zig",
-        // 16 => "src/compat_0_16.zig",
-        else => @compileError("unsupported Zig minor version"),
-    };
-    _ = compat_source;
-
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const compat_source = switch (builtin.zig_version.minor) {
+        15 => "src/compat.zig",
+        16...std.math.maxInt(u32) => "src/compat_0_16.zig",
+        else => @compileError("unsupported Zig minor version"),
+    };
+    const compat_mod = b.createModule(.{
+        .root_source_file = b.path(compat_source),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const serde_mod = b.addModule("serde", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
+    serde_mod.addImport("compat", compat_mod);
 
     const test_step = b.step("test", "Run all tests");
 
@@ -26,6 +30,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    test_mod.addImport("compat", compat_mod);
     const t = b.addTest(.{
         .root_module = test_mod,
     });
@@ -142,14 +147,16 @@ pub fn build(b: *std.Build) void {
 
     // Documentation generation.
     const docs_step = b.step("docs", "Generate autodocs");
+    const docs_mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    docs_mod.addImport("compat", compat_mod);
     const docs_lib = b.addLibrary(.{
         .name = "serde",
         .linkage = .static,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = docs_mod,
     });
     const install_docs = b.addInstallDirectory(.{
         .source_dir = docs_lib.getEmittedDocs(),

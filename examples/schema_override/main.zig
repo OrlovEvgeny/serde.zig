@@ -19,9 +19,7 @@ const schema_config = .{
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
     const config = RawConfig{
         .name = "my-service",
@@ -39,11 +37,11 @@ pub fn main() !void {
     defer allocator.free(config_json);
     std.debug.print("=== Schema B: Config (kebab-case, all fields) ===\n{s}\n\n", .{config_json});
 
-    const file = try std.fs.cwd().openFile("examples/schema_override/service.toml", .{});
-    defer file.close();
+    const file = try serde.compat.openFileForRead("examples/schema_override/service.toml");
+    defer serde.compat.closeFile(file);
     var file_buf: [4096]u8 = undefined;
-    var file_reader = file.readerStreaming(&file_buf);
-    const toml_input = try file_reader.interface.allocRemaining(allocator, .unlimited);
+    var file_reader = serde.compat.fileReaderStreaming(file, &file_buf);
+    const toml_input = try serde.compat.readerAllocRemaining(&file_reader, allocator, .unlimited);
     defer allocator.free(toml_input);
 
     var arena = std.heap.ArenaAllocator.init(allocator);
