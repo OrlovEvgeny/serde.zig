@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 
 const Allocator = std.mem.Allocator;
 
@@ -42,7 +43,7 @@ pub const Value = union(enum) {
     }
 };
 
-pub const Mapping = std.array_hash_map.String(Value);
+pub const Mapping = compat.StringArrayHashMap(Value);
 
 /// Parse YAML input into a Value tree.
 pub fn parse(allocator: Allocator, input: []const u8) ParseError!Value {
@@ -471,7 +472,7 @@ const Parser = struct {
             if (ch == ':' or ch == ',' or ch == '}' or ch == ']' or ch == '{' or ch == '[' or ch == '\n' or ch == '\r') break;
             self.pos += 1;
         }
-        const raw = std.mem.trimEnd(u8, self.input[start..self.pos], " \t");
+        const raw = compat.trimEnd(u8, self.input[start..self.pos], " \t");
         return self.allocator.dupe(u8, raw) catch return error.OutOfMemory;
     }
 
@@ -507,7 +508,7 @@ const Parser = struct {
             }
             self.pos += 1;
         }
-        const raw = std.mem.trimEnd(u8, self.input[start..self.pos], " \t");
+        const raw = compat.trimEnd(u8, self.input[start..self.pos], " \t");
         return resolveScalarType(raw, .plain);
     }
 
@@ -703,7 +704,7 @@ const Parser = struct {
             if (ch == '\n' or ch == '\r') break;
             self.pos += 1;
         }
-        const raw = std.mem.trimEnd(u8, self.input[start..self.pos], " \t");
+        const raw = compat.trimEnd(u8, self.input[start..self.pos], " \t");
         return self.allocator.dupe(u8, raw) catch return error.OutOfMemory;
     }
 

@@ -21,9 +21,7 @@ const AppConfig = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
     const config = AppConfig{
         .app_name = "my-service",
@@ -45,15 +43,14 @@ pub fn main() !void {
     std.debug.print("=== Serialized TOML ===\n{s}\n", .{toml_bytes});
 
     const tmp_path = "config_example.toml";
-    const cwd = std.fs.cwd();
-    try cwd.writeFile(.{ .sub_path = tmp_path, .data = toml_bytes });
-    defer cwd.deleteFile(tmp_path) catch {};
+    try serde.compat.writeFile(tmp_path, toml_bytes);
+    defer serde.compat.deleteFile(tmp_path) catch {};
 
-    const file = try cwd.openFile(tmp_path, .{});
-    defer file.close();
+    const file = try serde.compat.openFileForRead(tmp_path);
+    defer serde.compat.closeFile(file);
     var file_buf: [4096]u8 = undefined;
-    var reader = file.readerStreaming(&file_buf);
-    const file_content = try reader.interface.allocRemaining(allocator, .unlimited);
+    var reader = serde.compat.fileReaderStreaming(file, &file_buf);
+    const file_content = try serde.compat.readerAllocRemaining(&reader, allocator, .unlimited);
     defer allocator.free(file_content);
 
     var arena = std.heap.ArenaAllocator.init(allocator);

@@ -5,6 +5,7 @@
 //! element names, pretty-printing, and entity escaping.
 
 const std = @import("std");
+const compat = @import("compat");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");
 const scanner_mod = @import("scanner.zig");
@@ -26,18 +27,18 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 
 /// Serialize with explicit options.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
-    var aw: std.Io.Writer.Allocating = .init(allocator);
+    var aw: compat.Io.Writer.Allocating = .init(allocator);
     try xmlSerialize(@TypeOf(value), value, &aw.writer, opts, {});
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in XML format.
-pub fn toWriter(writer: *std.Io.Writer, value: anytype) !void {
+pub fn toWriter(writer: *compat.Io.Writer, value: anytype) !void {
     return toWriterWith(writer, value, .{});
 }
 
 /// Serialize with explicit options to a writer.
-pub fn toWriterWith(writer: *std.Io.Writer, value: anytype, opts: Options) !void {
+pub fn toWriterWith(writer: *compat.Io.Writer, value: anytype, opts: Options) !void {
     try xmlSerialize(@TypeOf(value), value, writer, opts, {});
 }
 
@@ -57,18 +58,18 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 
 /// Serialize with explicit options and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opts: Options, comptime schema: anytype) ![]u8 {
-    var aw: std.Io.Writer.Allocating = .init(allocator);
+    var aw: compat.Io.Writer.Allocating = .init(allocator);
     try xmlSerialize(@TypeOf(value), value, &aw.writer, opts, schema);
     return aw.toOwnedSlice();
 }
 
 /// Serialize to a writer with an external schema.
-pub fn toWriterSchema(writer: *std.Io.Writer, value: anytype, comptime schema: anytype) !void {
+pub fn toWriterSchema(writer: *compat.Io.Writer, value: anytype, comptime schema: anytype) !void {
     try xmlSerialize(@TypeOf(value), value, writer, .{}, schema);
 }
 
 /// Serialize with explicit options to a writer with an external schema.
-pub fn toWriterWithSchema(writer: *std.Io.Writer, value: anytype, opts: Options, comptime schema: anytype) !void {
+pub fn toWriterWithSchema(writer: *compat.Io.Writer, value: anytype, opts: Options, comptime schema: anytype) !void {
     try xmlSerialize(@TypeOf(value), value, writer, opts, schema);
 }
 
@@ -83,7 +84,7 @@ pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: 
 }
 
 /// Deserialize from a reader.
-pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.Io.Reader) !T {
+pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Io.Reader) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSlice(T, allocator, buf);
@@ -91,10 +92,9 @@ pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.I
 
 /// Deserialize from a file path.
 pub fn fromFilePath(comptime T: type, allocator: std.mem.Allocator, path: []const u8) !T {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    var reader = file.reader().any();
-    return fromReader(T, allocator, &reader);
+    const content = try compat.readFileAlloc(allocator, path, 10 * 1024 * 1024);
+    defer allocator.free(content);
+    return fromSlice(T, allocator, content);
 }
 
 /// Deserialize with an external schema.
@@ -108,7 +108,7 @@ pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, i
 }
 
 /// Deserialize from a reader with an external schema.
-pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *std.Io.Reader, comptime schema: anytype) !T {
+pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Io.Reader, comptime schema: anytype) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSliceSchema(T, allocator, buf, schema);
@@ -118,7 +118,7 @@ pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: 
 fn xmlSerialize(
     comptime T: type,
     value: T,
-    writer: *std.Io.Writer,
+    writer: *compat.Io.Writer,
     opts: Options,
     comptime schema: anytype,
 ) !void {
@@ -148,7 +148,7 @@ fn xmlSerialize(
 fn writeStructElement(
     comptime T: type,
     value: T,
-    writer: *std.Io.Writer,
+    writer: *compat.Io.Writer,
     opts: Options,
     comptime root_name: []const u8,
     comptime schema: anytype,
@@ -367,7 +367,7 @@ fn initStructDefaults(comptime T: type, comptime schema: anytype) !T {
     return result;
 }
 
-fn readAll(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]u8 {
+fn readAll(allocator: std.mem.Allocator, reader: *compat.Io.Reader) ![]u8 {
     var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(allocator);
     while (true) {

@@ -25,6 +25,7 @@
 //! ```
 
 pub const core = @import("core/mod.zig");
+pub const compat = @import("compat");
 pub const json = @import("formats/json/mod.zig");
 pub const msgpack = @import("formats/msgpack/mod.zig");
 pub const toml = @import("formats/toml/mod.zig");
@@ -58,6 +59,7 @@ pub const helpers = struct {
 
 test {
     _ = core;
+    _ = compat;
     _ = @import("core/kind.zig");
     _ = @import("core/options.zig");
     _ = @import("core/serialize.zig");

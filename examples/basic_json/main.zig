@@ -17,9 +17,7 @@ const Response = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
     // --- Serialize a simple struct ---
     const point = Point{ .x = 10, .y = 20 };

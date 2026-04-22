@@ -1,7 +1,8 @@
 const std = @import("std");
+const compat = @import("compat");
 
 /// Write XML-escaped text content to the writer. Escapes &, <, >.
-pub fn writeXmlEscaped(writer: *std.Io.Writer, value: []const u8) std.Io.Writer.Error!void {
+pub fn writeXmlEscaped(writer: *compat.Io.Writer, value: []const u8) compat.Io.Writer.Error!void {
     var start: usize = 0;
     for (value, 0..) |c, i| {
         const escape: ?[]const u8 = switch (c) {
@@ -19,7 +20,7 @@ pub fn writeXmlEscaped(writer: *std.Io.Writer, value: []const u8) std.Io.Writer.
 
 /// Write an XML-escaped attribute value wrapped in double quotes.
 /// Escapes &, <, >, ", '.
-pub fn writeXmlAttrEscaped(writer: *std.Io.Writer, value: []const u8) std.Io.Writer.Error!void {
+pub fn writeXmlAttrEscaped(writer: *compat.Io.Writer, value: []const u8) compat.Io.Writer.Error!void {
     try writer.writeByte('"');
     var start: usize = 0;
     for (value, 0..) |c, i| {
@@ -44,7 +45,7 @@ pub fn writeXmlAttrEscaped(writer: *std.Io.Writer, value: []const u8) std.Io.Wri
 const testing = std.testing;
 
 fn testEscapeText(input: []const u8, expected: []const u8) !void {
-    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     try writeXmlEscaped(&aw.writer, input);
     const result = try aw.toOwnedSlice();
     defer testing.allocator.free(result);
@@ -52,7 +53,7 @@ fn testEscapeText(input: []const u8, expected: []const u8) !void {
 }
 
 fn testEscapeAttr(input: []const u8, expected: []const u8) !void {
-    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     try writeXmlAttrEscaped(&aw.writer, input);
     const result = try aw.toOwnedSlice();
     defer testing.allocator.free(result);

@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 const core_serialize = @import("../../core/serialize.zig");
 const xml_writer = @import("writer.zig");
 const options = @import("../../core/options.zig");
@@ -14,13 +15,13 @@ pub const Options = struct {
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
 pub const Serializer = struct {
-    out: *std.Io.Writer,
+    out: *compat.Io.Writer,
     depth: u32 = 0,
     options: Options,
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *std.Io.Writer, opts: Options) Serializer {
+    pub fn init(out: *compat.Io.Writer, opts: Options) Serializer {
         return .{ .out = out, .options = opts };
     }
 
@@ -244,7 +245,7 @@ pub const ArraySerializer = struct {
 const testing = std.testing;
 
 fn serializeToString(value: anytype, opts: Options) ![]u8 {
-    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

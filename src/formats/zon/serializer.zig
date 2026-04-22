@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 const core_serialize = @import("../../core/serialize.zig");
 
 pub const Options = struct {
@@ -9,14 +10,14 @@ pub const Options = struct {
 pub const SerializeError = error{ OutOfMemory, WriteFailed };
 
 pub const Serializer = struct {
-    out: *std.Io.Writer,
+    out: *compat.Io.Writer,
     depth: u32 = 0,
     options: Options,
     needs_comma: u64 = 0,
 
     pub const Error = SerializeError;
 
-    pub fn init(out: *std.Io.Writer, opts: Options) Serializer {
+    pub fn init(out: *compat.Io.Writer, opts: Options) Serializer {
         return .{ .out = out, .options = opts };
     }
 
@@ -188,7 +189,7 @@ pub const ArraySerializer = struct {
 };
 
 /// Write a Zig string literal with proper escaping.
-fn writeZonString(out: *std.Io.Writer, value: []const u8) !void {
+fn writeZonString(out: *compat.Io.Writer, value: []const u8) !void {
     try out.writeByte('"');
     for (value) |c| {
         switch (c) {
@@ -211,7 +212,7 @@ fn writeZonString(out: *std.Io.Writer, value: []const u8) !void {
 const testing = std.testing;
 
 fn serializeToString(value: anytype, opts: Options) ![]u8 {
-    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     var ser = Serializer.init(&aw.writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();

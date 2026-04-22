@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 const kind_mod = @import("kind.zig");
 const opts = @import("options.zig");
 
@@ -83,7 +84,7 @@ fn deserializeEnumSchema(comptime T: type, allocator: Allocator, deserializer: a
     if (comptime opts.getEnumReprSchema(T, schema) == .integer) {
         const tag_type = @typeInfo(T).@"enum".tag_type;
         const int_val = try deserializer.deserializeInt(tag_type);
-        return std.enums.fromInt(T, int_val) orelse
+        return compat.intToEnum(T, int_val) orelse
             return deserializer.raiseError(error.UnexpectedToken);
     }
     // No rename/alias: let the format handle it directly.

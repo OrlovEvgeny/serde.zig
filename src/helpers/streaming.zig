@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 const json_mod = @import("../formats/json/mod.zig");
 
 const Allocator = std.mem.Allocator;
@@ -7,13 +8,13 @@ const Allocator = std.mem.Allocator;
 /// Reads one line at a time from a type-erased reader and deserializes each line as JSON.
 pub fn StreamingDeserializer(comptime T: type) type {
     return struct {
-        reader: *std.Io.Reader,
+        reader: *compat.Io.Reader,
         allocator: Allocator,
         buf: std.ArrayListUnmanaged(u8) = .empty,
 
         const Self = @This();
 
-        pub fn init(allocator: Allocator, reader: *std.Io.Reader) Self {
+        pub fn init(allocator: Allocator, reader: *compat.Io.Reader) Self {
             return .{ .reader = reader, .allocator = allocator };
         }
 
@@ -62,7 +63,7 @@ const testing = std.testing;
 test "streaming NDJSON" {
     const Entry = struct { id: i32 };
     const input = "{\"id\":1}\n{\"id\":2}\n{\"id\":3}\n";
-    var reader: std.Io.Reader = .fixed(input);
+    var reader: compat.Io.Reader = .fixed(input);
     var sd = StreamingDeserializer(Entry).init(testing.allocator, &reader);
     defer sd.deinit();
 
@@ -78,7 +79,7 @@ test "streaming NDJSON" {
 test "streaming skips blank lines" {
     const Entry = struct { v: i32 };
     const input = "\n{\"v\":1}\n\n{\"v\":2}\n\n";
-    var reader: std.Io.Reader = .fixed(input);
+    var reader: compat.Io.Reader = .fixed(input);
     var sd = StreamingDeserializer(Entry).init(testing.allocator, &reader);
     defer sd.deinit();
 
@@ -90,7 +91,7 @@ test "streaming skips blank lines" {
 test "streaming with strings" {
     const Msg = struct { text: []const u8 };
     const input = "{\"text\":\"hello\"}\n{\"text\":\"world\"}\n";
-    var reader: std.Io.Reader = .fixed(input);
+    var reader: compat.Io.Reader = .fixed(input);
 
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

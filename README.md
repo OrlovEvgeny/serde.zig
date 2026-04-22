@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/OrlovEvgeny/serde.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/OrlovEvgeny/serde.zig/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/OrlovEvgeny/serde.zig?label=release)](https://github.com/OrlovEvgeny/serde.zig/releases/latest)
-[![Zig](https://img.shields.io/badge/zig-0.15.2-blue)](https://ziglang.org/download/)
+[![Zig](https://img.shields.io/badge/zig-0.15.2%20%7C%200.16.0-blue)](https://ziglang.org/download/)
 
 Serialization framework for Zig
 
@@ -106,7 +106,15 @@ const serde_dep = b.dependency("serde", .{
 exe.root_module.addImport("serde", serde_dep.module("serde"));
 ```
 
-Requires Zig 0.15.0 or later.
+Requires Zig 0.15.2 or 0.16.0.
+
+Supported Zig versions:
+
+| Zig version | Status |
+|-------------|--------|
+| `0.16.0` | current stable, required in docs CI |
+| `0.15.2` | previous stable, fully supported |
+| `master` | tracked in CI as non-blocking signal |
 
 ## Formats
 

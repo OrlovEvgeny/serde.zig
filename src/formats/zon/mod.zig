@@ -5,6 +5,7 @@
 //! with indent of 4 spaces.
 
 const std = @import("std");
+const compat = @import("compat");
 const serializer_mod = @import("serializer.zig");
 const deserializer_mod = @import("deserializer.zig");
 const core_serialize = @import("../../core/serialize.zig");
@@ -22,7 +23,7 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 
 /// Serialize with explicit options.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
-    var aw: std.Io.Writer.Allocating = .init(allocator);
+    var aw: compat.Io.Writer.Allocating = .init(allocator);
     try toWriterWith(&aw.writer, value, opts);
     return aw.toOwnedSlice();
 }
@@ -42,12 +43,12 @@ pub fn toSliceAllocWith(allocator: std.mem.Allocator, value: anytype, opts: Opti
 }
 
 /// Serialize a value to a writer in ZON format.
-pub fn toWriter(writer: *std.Io.Writer, value: anytype) !void {
+pub fn toWriter(writer: *compat.Io.Writer, value: anytype) !void {
     return toWriterWith(writer, value, .{});
 }
 
 /// Serialize with explicit options to a writer.
-pub fn toWriterWith(writer: *std.Io.Writer, value: anytype, opts: Options) !void {
+pub fn toWriterWith(writer: *compat.Io.Writer, value: anytype, opts: Options) !void {
     var ser = Serializer.init(writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
 }
@@ -55,7 +56,7 @@ pub fn toWriterWith(writer: *std.Io.Writer, value: anytype, opts: Options) !void
 pub const PrettyOptions = struct { indent: u8 = 4 };
 
 /// Serialize a value as pretty-printed ZON to a writer.
-pub fn toPrettyWriter(writer: *std.Io.Writer, value: anytype, opts: PrettyOptions) !void {
+pub fn toPrettyWriter(writer: *compat.Io.Writer, value: anytype, opts: PrettyOptions) !void {
     return toWriterWith(writer, value, .{ .pretty = true, .indent = opts.indent });
 }
 
@@ -68,18 +69,18 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 
 /// Serialize with options and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opt: Options, comptime schema: anytype) ![]u8 {
-    var aw: std.Io.Writer.Allocating = .init(allocator);
+    var aw: compat.Io.Writer.Allocating = .init(allocator);
     try toWriterWithSchema(&aw.writer, value, opt, schema);
     return aw.toOwnedSlice();
 }
 
 /// Serialize a value to a writer in ZON format with an external schema.
-pub fn toWriterSchema(writer: *std.Io.Writer, value: anytype, comptime schema: anytype) !void {
+pub fn toWriterSchema(writer: *compat.Io.Writer, value: anytype, comptime schema: anytype) !void {
     return toWriterWithSchema(writer, value, .{}, schema);
 }
 
 /// Serialize with options to a writer with an external schema.
-pub fn toWriterWithSchema(writer: *std.Io.Writer, value: anytype, opt: Options, comptime schema: anytype) !void {
+pub fn toWriterWithSchema(writer: *compat.Io.Writer, value: anytype, opt: Options, comptime schema: anytype) !void {
     var ser = Serializer.init(writer, opt);
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
 }
@@ -120,7 +121,7 @@ pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: 
 }
 
 /// Deserialize a value of type T from a reader.
-pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.Io.Reader) !T {
+pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *compat.Io.Reader) !T {
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSlice(T, allocator, buf);
@@ -128,9 +129,7 @@ pub fn fromReader(comptime T: type, allocator: std.mem.Allocator, reader: *std.I
 
 /// Deserialize a value of type T from a file path.
 pub fn fromFilePath(comptime T: type, allocator: std.mem.Allocator, path: []const u8) !T {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    const content = try file.reader().readAllAlloc(allocator, 10 * 1024 * 1024);
+    const content = try compat.readFileAlloc(allocator, path, 10 * 1024 * 1024);
     defer allocator.free(content);
     return fromSlice(T, allocator, content);
 }
@@ -140,8 +139,8 @@ fn checkTrailingData(deser: *Deserializer) !void {
     if (deser.pos != deser.input.len) return error.TrailingData;
 }
 
-fn readAll(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]u8 {
-    return reader.allocRemaining(allocator, std.Io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
+fn readAll(allocator: std.mem.Allocator, reader: *compat.Io.Reader) ![]u8 {
+    return reader.allocRemaining(allocator, compat.Io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
 }
 
 const CoreValue = @import("../../core/value.zig").Value;
@@ -306,7 +305,7 @@ test "slice of structs roundtrip" {
 }
 
 test "toWriter" {
-    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     try toWriter(&aw.writer, @as(i32, 42));
     const bytes = try aw.toOwnedSlice();
     defer testing.allocator.free(bytes);
@@ -315,7 +314,7 @@ test "toWriter" {
 
 test "toPrettyWriter" {
     const Point = struct { x: i32, y: i32 };
-    var aw: std.Io.Writer.Allocating = .init(testing.allocator);
+    var aw: compat.Io.Writer.Allocating = .init(testing.allocator);
     try toPrettyWriter(&aw.writer, Point{ .x = 1, .y = 2 }, .{});
     const bytes = try aw.toOwnedSlice();
     defer testing.allocator.free(bytes);
@@ -344,7 +343,7 @@ test "toValue and fromValue" {
 
 test "fromReader" {
     const input = ".{.x = 1,.y = 2}";
-    var reader: std.Io.Reader = .fixed(input);
+    var reader: compat.Io.Reader = .fixed(input);
     const Point = struct { x: i32, y: i32 };
     const val = try fromReader(Point, testing.allocator, &reader);
     try testing.expectEqual(@as(i32, 1), val.x);

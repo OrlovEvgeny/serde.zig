@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 
 const Allocator = std.mem.Allocator;
 
@@ -42,7 +43,7 @@ pub const Value = union(enum) {
     }
 };
 
-pub const Table = std.array_hash_map.String(Value);
+pub const Table = compat.StringArrayHashMap(Value);
 
 pub fn parse(allocator: Allocator, input: []const u8) ParseError!Table {
     var p = Parser{

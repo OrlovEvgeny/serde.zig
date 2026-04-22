@@ -10,9 +10,7 @@ const LogEntry = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    const allocator = std.heap.page_allocator;
 
     const entries = [_]LogEntry{
         .{ .timestamp = 1700000001, .level = .info, .message = "Server started on port 8080" },
@@ -38,7 +36,7 @@ pub fn main() !void {
     defer arena.deinit();
 
     std.debug.print("=== Streaming read (warn + err only) ===\n", .{});
-    var reader: std.Io.Reader = .fixed(ndjson_buf.items);
+    var reader: serde.compat.Io.Reader = .fixed(ndjson_buf.items);
     var sd = serde.helpers.StreamingDeserializer(LogEntry).init(arena.allocator(), &reader);
     defer sd.deinit();
 
