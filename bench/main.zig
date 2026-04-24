@@ -218,7 +218,7 @@ pub fn main() !void {
 }
 
 fn writeStdout(bytes: []const u8) !void {
-    if (comptime @hasDecl(std, "Io")) {
+    if (comptime @hasDecl(std, "Io") and @hasDecl(std.Io, "File")) {
         try std.Io.File.stdout().writeStreamingAll(std.Options.debug_io, bytes);
     } else {
         try std.io.getStdOut().writer().writeAll(bytes);
