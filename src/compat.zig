@@ -42,6 +42,10 @@ pub fn writeFile(path: []const u8, data: []const u8) !void {
     try std.fs.cwd().writeFile(.{ .sub_path = path, .data = data });
 }
 
+pub fn writeStdout(data: []const u8) !void {
+    try std.fs.File.stdout().writeAll(data);
+}
+
 pub fn deleteFile(path: []const u8) !void {
     try std.fs.cwd().deleteFile(path);
 }

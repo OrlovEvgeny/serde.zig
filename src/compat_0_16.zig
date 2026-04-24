@@ -42,6 +42,10 @@ pub fn writeFile(path: []const u8, data: []const u8) !void {
     try std.Io.Dir.cwd().writeFile(std.Options.debug_io, .{ .sub_path = path, .data = data });
 }
 
+pub fn writeStdout(data: []const u8) !void {
+    try std.Io.File.stdout().writeStreamingAll(std.Options.debug_io, data);
+}
+
 pub fn deleteFile(path: []const u8) !void {
     try std.Io.Dir.cwd().deleteFile(std.Options.debug_io, path);
 }

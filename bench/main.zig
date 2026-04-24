@@ -211,17 +211,9 @@ pub fn main() !void {
     };
     defer gpa.free(rendered);
 
-    try writeStdout(rendered);
+    try compat.writeStdout(rendered);
     if (options.out.len != 0) {
         try compat.writeFile(options.out, rendered);
-    }
-}
-
-fn writeStdout(bytes: []const u8) !void {
-    if (comptime @hasDecl(std, "Io") and @hasDecl(std.Io, "File")) {
-        try std.Io.File.stdout().writeStreamingAll(std.Options.debug_io, bytes);
-    } else {
-        try std.io.getStdOut().writer().writeAll(bytes);
     }
 }
 
