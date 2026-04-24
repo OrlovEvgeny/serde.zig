@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const bench_config = parseBenchArgs(b);
     const compat_source = switch (builtin.zig_version.minor) {
         15 => "src/compat.zig",
         16...std.math.maxInt(u32) => "src/compat_0_16.zig",
@@ -106,6 +107,64 @@ pub fn build(b: *std.Build) void {
         fuzz_step.dependOn(&fuzz_lib.step);
     }
 
+    // Performance benchmarks.
+    const bench_step = b.step("bench", "Run performance benchmarks");
+    const bench_options = b.addOptions();
+    bench_options.addOption([]const u8, "format", bench_config.format);
+    bench_options.addOption([]const u8, "filter", bench_config.filter);
+    bench_options.addOption(bool, "compare_std_json", bench_config.compare_std_json);
+    bench_options.addOption([]const u8, "baseline", bench_config.baseline);
+    bench_options.addOption(f64, "threshold_percent", bench_config.threshold_percent);
+    bench_options.addOption([]const u8, "out", bench_config.out);
+
+    const bench_optimize = b.option(
+        std.builtin.OptimizeMode,
+        "bench-optimize",
+        "Benchmark optimization mode",
+    ) orelse .ReleaseFast;
+    const bench_compat_mod = b.createModule(.{
+        .root_source_file = b.path(compat_source),
+        .target = target,
+        .optimize = bench_optimize,
+    });
+    const serde_bench_mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = bench_optimize,
+    });
+    serde_bench_mod.addImport("compat", bench_compat_mod);
+
+    const bench_mod = b.createModule(.{
+        .root_source_file = b.path("bench/main.zig"),
+        .target = target,
+        .optimize = bench_optimize,
+        .imports = &.{
+            .{ .name = "serde", .module = serde_bench_mod },
+            .{ .name = "bench_options", .module = bench_options.createModule() },
+        },
+    });
+    const bench_exe = b.addExecutable(.{
+        .name = "serde-bench",
+        .root_module = bench_mod,
+    });
+    const bench_run = b.addRunArtifact(bench_exe);
+    bench_step.dependOn(&bench_run.step);
+
+    const bench_test_mod = b.createModule(.{
+        .root_source_file = b.path("bench/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "serde", .module = serde_mod },
+            .{ .name = "bench_options", .module = bench_options.createModule() },
+        },
+    });
+    const bench_t = b.addTest(.{
+        .root_module = bench_test_mod,
+    });
+    const bench_test_run = b.addRunArtifact(bench_t);
+    test_step.dependOn(&bench_test_run.step);
+
     // Example programs.
     const examples_step = b.step("examples", "Build all examples");
 
@@ -164,4 +223,54 @@ pub fn build(b: *std.Build) void {
         .install_subdir = "docs",
     });
     docs_step.dependOn(&install_docs.step);
+}
+
+const BenchConfig = struct {
+    format: []const u8 = "text",
+    filter: []const u8 = "",
+    compare_std_json: bool = false,
+    baseline: []const u8 = "",
+    threshold_percent: f64 = 10.0,
+    out: []const u8 = "",
+};
+
+fn parseBenchArgs(b: *std.Build) BenchConfig {
+    var config = BenchConfig{};
+    const args = b.args orelse return config;
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--format")) {
+            i += 1;
+            if (i >= args.len) @panic("--format requires a value");
+            config.format = b.dupe(args[i]);
+        } else if (std.mem.eql(u8, arg, "--filter")) {
+            i += 1;
+            if (i >= args.len) @panic("--filter requires a value");
+            config.filter = b.dupe(args[i]);
+        } else if (std.mem.eql(u8, arg, "--compare")) {
+            i += 1;
+            if (i >= args.len) @panic("--compare requires a value");
+            if (std.mem.eql(u8, args[i], "std_json")) {
+                config.compare_std_json = true;
+            } else {
+                @panic("unsupported --compare value; expected std_json");
+            }
+        } else if (std.mem.eql(u8, arg, "--baseline")) {
+            i += 1;
+            if (i >= args.len) @panic("--baseline requires a value");
+            config.baseline = b.dupe(args[i]);
+        } else if (std.mem.eql(u8, arg, "--threshold")) {
+            i += 1;
+            if (i >= args.len) @panic("--threshold requires a value");
+            config.threshold_percent = std.fmt.parseFloat(f64, args[i]) catch @panic("invalid --threshold value");
+        } else if (std.mem.eql(u8, arg, "--out")) {
+            i += 1;
+            if (i >= args.len) @panic("--out requires a value");
+            config.out = b.dupe(args[i]);
+        } else {
+            @panic("unknown benchmark argument");
+        }
+    }
+    return config;
 }

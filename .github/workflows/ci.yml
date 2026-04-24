@@ -24,7 +24,7 @@ jobs:
           version: ${{ matrix.zig }}
 
       - name: Check formatting
-        run: zig fmt --check src/ build.zig
+        run: zig fmt --check src/ bench/ build.zig
 
       - name: Build
         run: zig build
@@ -34,6 +34,66 @@ jobs:
 
       - name: Build fuzz targets
         run: zig build fuzz
+
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        zig: ["0.15.2", "0.16.0"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: serde-base
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ matrix.zig }}
+
+      - name: Prepare benchmark baseline
+        shell: bash
+        run: |
+          baseline="benchmark-baseline-${{ matrix.zig }}.json"
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -d serde-base ]; then
+            if (cd serde-base && zig build -l | grep -q '^  bench'); then
+              (cd serde-base && zig build bench -- --format json --compare std_json --out "../$baseline")
+            else
+              printf '{"schema_version":1,"results":[]}\n' > "$baseline"
+            fi
+          else
+            cp bench/baseline.json "$baseline"
+          fi
+
+      - name: Run benchmarks
+        run: zig build bench -- --format json --compare std_json --baseline benchmark-baseline-${{ matrix.zig }}.json --out benchmark-results-${{ matrix.zig }}.json
+
+      - name: Benchmark summary
+        shell: bash
+        run: |
+          file="benchmark-results-${{ matrix.zig }}.json"
+          echo "### serde.zig benchmarks (${{ matrix.zig }})" >> "$GITHUB_STEP_SUMMARY"
+          if grep -q '"regression_over_threshold":true' "$file"; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Potential >10% regressions in key cases:" >> "$GITHUB_STEP_SUMMARY"
+            grep -o '"id":"[^"]*"[^}]*"regression_percent":[^,}]*[^}]*"regression_over_threshold":true' "$file" \
+              | sed -E 's/"id":"([^"]*)".*"regression_percent":([^,}]*).*/- `\1`: \2%/' \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "No key-case regression over the configured threshold." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-zig-${{ matrix.zig }}
+          path: |
+            benchmark-baseline-${{ matrix.zig }}.json
+            benchmark-results-${{ matrix.zig }}.json
 
   docs:
     name: Deploy docs
