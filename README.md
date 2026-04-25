@@ -44,6 +44,7 @@ Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zi
 - [Out-of-Band Type Overrides](#out-of-band-type-overrides)
 - [Custom Serialization](#custom-serialization)
 - [Error Handling](#error-handling)
+- [Performance](#performance)
 - [Tests](#tests)
 - [License](#license)
 
@@ -843,6 +844,44 @@ const result = serde.json.fromSlice(Config, allocator, input) catch |err| switch
     else => return err,
 };
 ```
+
+## Performance
+
+Run the benchmark suite with:
+
+```sh
+zig build bench
+zig build bench -- --format json
+zig build bench -- --filter json
+zig build bench -- --compare std_json
+```
+
+Benchmark arguments are passed after `--` because Zig consumes build-step
+arguments before the project runner sees them. The runner defaults to
+`ReleaseFast` for the benchmark executable and the imported `serde` module.
+
+Metrics include `ns/op`, `allocations/op`, `bytes allocated/op`, throughput
+MB/s, average output size, warm runs, and selected cold runs. JSON output also
+records Zig version, target, optimize mode, implementation, format, case, and
+operation so CI artifacts can be compared over time.
+
+Representative local run, Apple Silicon macOS, Zig 0.16.0, `ReleaseFast`,
+April 24, 2026:
+
+| Case | Operation | Implementation | ns/op | allocs/op | bytes/op | MB/s |
+|------|-----------|----------------|-------|-----------|----------|------|
+| flat struct JSON | serialize | serde | 1916.44 | 1.00 | 132.00 | 25.88 |
+| flat struct JSON | serialize | std_json | 1608.86 | 1.00 | 132.00 | 30.82 |
+| flat struct JSON | deserialize | serde | 1633.18 | 1.00 | 70.00 | 30.37 |
+| flat struct JSON | deserialize | std_json | 1769.35 | 1.00 | 256.00 | 28.03 |
+| borrowed JSON strings | deserialize | serde | 78.17 | 0.00 | 0.00 | 817.44 |
+| array of structs JSON | roundtrip | serde | 5115.59 | 2.00 | 1888.00 | 78.11 |
+
+CI uploads benchmark baseline/result artifacts for Zig 0.15.2 and 0.16.0. On
+pull requests, CI compares the PR against the base SHA on the same runner when
+the base branch already has `zig build bench`; otherwise it falls back to the
+checked-in empty baseline. Regressions over the configured threshold are shown
+in the GitHub Actions summary without failing the PR.
 
 ## Tests
 
