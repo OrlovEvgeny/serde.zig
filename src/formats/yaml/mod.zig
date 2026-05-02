@@ -945,6 +945,36 @@ test "deserialize StringHashMap" {
     try testing.expectEqualStrings("bar", b.foo);
 }
 
+test "deserialize StringHashMap nested struct with quoted mapping keys" {
+    const Spec = struct {
+        true_text: ?[]const u8 = null,
+        false_text: ?[]const u8 = null,
+
+        pub const serde = .{
+            .rename = .{
+                .true_text = "true",
+                .false_text = "false",
+            },
+        };
+    };
+    const Root = struct {
+        items: std.StringHashMap(Spec),
+    };
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    const parsed = try fromSlice(Root, arena.allocator(),
+        \\items:
+        \\  enabled:
+        \\    "true": "ON"
+        \\    "false": "OFF"
+    );
+    const spec = parsed.items.get("enabled") orelse return error.TestUnexpectedResult;
+    try testing.expectEqualStrings("ON", spec.true_text.?);
+    try testing.expectEqualStrings("OFF", spec.false_text.?);
+}
+
 test "roundtrip StringHashMap scalar values" {
     var map = std.StringHashMap(i32).init(testing.allocator);
     defer map.deinit();

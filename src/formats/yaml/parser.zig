@@ -163,28 +163,17 @@ const Parser = struct {
             result = try self.parseFlowSequence();
         } else if (c == '-' and self.isBlockSequenceIndicator()) {
             result = try self.parseBlockSequence(min_indent);
+        } else if (c == '|' or c == '>') {
+            result = try self.parseBlockScalar();
+        } else if (self.isBlockMappingKeyAt(self.pos)) {
+            result = try self.parseBlockMapping(min_indent);
         } else if (c == '"') {
             result = try self.parseDoubleQuotedScalar();
         } else if (c == '\'') {
             result = try self.parseSingleQuotedScalar();
-        } else if (c == '|' or c == '>') {
-            result = try self.parseBlockScalar();
         } else {
-            // Plain scalar — but check if this is a mapping key (has ': ' after it).
-            const saved_pos = self.pos;
             const plain = self.scanPlainScalar();
-
-            self.skipWhitespaceInline();
-
-            if (self.pos < self.input.len and self.input[self.pos] == ':' and
-                (self.pos + 1 >= self.input.len or isWhitespaceOrBreak(self.input[self.pos + 1])))
-            {
-                // This is a mapping key — rewind and parse as block mapping.
-                self.pos = saved_pos;
-                result = try self.parseBlockMapping(min_indent);
-            } else {
-                result = resolveScalarType(plain, .plain);
-            }
+            result = resolveScalarType(plain, .plain);
         }
 
         if (anchor_name) |name| {
@@ -858,26 +847,82 @@ const Parser = struct {
         const c = self.input[self.pos];
         if (c == '{') return self.parseFlowMapping();
         if (c == '[') return self.parseFlowSequence();
-        if (c == '"') return self.parseDoubleQuotedScalar();
-        if (c == '\'') return self.parseSingleQuotedScalar();
         if (c == '|' or c == '>') return self.parseBlockScalar();
 
-        // Check for mapping key pattern: scan plain scalar, then look for ": ".
-        const saved_pos = self.pos;
-        const plain = self.scanPlainScalar();
-        self.skipWhitespaceInline();
-
-        if (self.pos < self.input.len and self.input[self.pos] == ':' and
-            (self.pos + 1 >= self.input.len or isWhitespaceOrBreak(self.input[self.pos + 1])))
-        {
+        if (self.isBlockMappingKeyAt(self.pos)) {
             // Mapping key detected. Rewind and parse as block mapping using
             // content_col so continuation lines at the same column are included.
-            self.pos = saved_pos;
             return self.parseBlockMappingAtCol(content_col);
         }
 
+        if (c == '"') return self.parseDoubleQuotedScalar();
+        if (c == '\'') return self.parseSingleQuotedScalar();
+
+        const plain = self.scanPlainScalar();
         self.skipToEndOfLine();
         return resolveScalarType(plain, .plain);
+    }
+
+    fn isBlockMappingKeyAt(self: *Parser, start: usize) bool {
+        var p = self.peekScalarKeyEnd(start) orelse return false;
+        while (p < self.input.len and (self.input[p] == ' ' or self.input[p] == '\t'))
+            p += 1;
+        return p < self.input.len and self.input[p] == ':' and
+            (p + 1 >= self.input.len or isWhitespaceOrBreak(self.input[p + 1]));
+    }
+
+    fn peekScalarKeyEnd(self: *Parser, start: usize) ?usize {
+        if (start >= self.input.len) return null;
+        return switch (self.input[start]) {
+            '"' => self.peekDoubleQuotedScalarEnd(start),
+            '\'' => self.peekSingleQuotedScalarEnd(start),
+            '|', '>' => null,
+            else => self.peekPlainScalarEnd(start),
+        };
+    }
+
+    fn peekPlainScalarEnd(self: *Parser, start: usize) ?usize {
+        var p = start;
+        while (p < self.input.len) {
+            const ch = self.input[p];
+            if (ch == ':' and p + 1 < self.input.len and
+                (self.input[p + 1] == ' ' or isBreak(self.input[p + 1])))
+                break;
+            if (ch == ':' and p + 1 >= self.input.len) break;
+            if (ch == '#' and p > start and self.input[p - 1] == ' ') break;
+            if (ch == '\n' or ch == '\r') break;
+            p += 1;
+        }
+        return p;
+    }
+
+    fn peekDoubleQuotedScalarEnd(self: *Parser, start: usize) ?usize {
+        var p = start + 1;
+        while (p < self.input.len) {
+            const ch = self.input[p];
+            if (ch == '"') return p + 1;
+            if (ch == '\\') {
+                p += 1;
+                if (p >= self.input.len) return null;
+            }
+            p += 1;
+        }
+        return null;
+    }
+
+    fn peekSingleQuotedScalarEnd(self: *Parser, start: usize) ?usize {
+        var p = start + 1;
+        while (p < self.input.len) {
+            if (self.input[p] == '\'') {
+                if (p + 1 < self.input.len and self.input[p + 1] == '\'') {
+                    p += 2;
+                    continue;
+                }
+                return p + 1;
+            }
+            p += 1;
+        }
+        return null;
     }
 
     /// Block mapping parser that uses a column check instead of currentIndent().
@@ -1123,6 +1168,20 @@ test "parse nested mapping" {
     try testing.expectEqual(@as(i64, 42), outer.mapping.get("inner").?.integer);
 }
 
+test "parse nested mapping with quoted keys" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const val = try parse(arena.allocator(),
+        \\outer:
+        \\  "true": ON
+        \\  'false': OFF
+        \\
+    );
+    const outer = val.mapping.get("outer").?;
+    try testing.expectEqualStrings("ON", outer.mapping.get("true").?.string);
+    try testing.expectEqualStrings("OFF", outer.mapping.get("false").?.string);
+}
+
 test "parse block sequence" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -1219,6 +1278,21 @@ test "parse sequence of mappings" {
         \\  val: 1
         \\- name: b
         \\  val: 2
+        \\
+    );
+    try testing.expectEqual(@as(usize, 2), val.sequence.len);
+    try testing.expectEqualStrings("a", val.sequence[0].mapping.get("name").?.string);
+    try testing.expectEqual(@as(i64, 2), val.sequence[1].mapping.get("val").?.integer);
+}
+
+test "parse sequence of mappings with quoted keys" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const val = try parse(arena.allocator(),
+        \\- "name": a
+        \\  'val': 1
+        \\- "name": b
+        \\  'val': 2
         \\
     );
     try testing.expectEqual(@as(usize, 2), val.sequence.len);
