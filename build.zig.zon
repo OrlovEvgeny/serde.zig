@@ -1,7 +1,7 @@
 .{
     .name = .serde,
     .fingerprint = 0x1f94ed794f333bd4,
-    .version = "1.0.8",
+    .version = "1.1.0",
     .minimum_zig_version = "0.15.2",
     .paths = .{
         "build.zig",
