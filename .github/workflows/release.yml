@@ -23,9 +23,36 @@ jobs:
       - name: Run tests
         run: zig build test
 
+  version:
+    name: Version metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version metadata matches the tag
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          zon=$(sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' build.zig.zon)
+          readme=$(sed -n 's|.*archive/refs/tags/v\([0-9][^/]*\)\.tar\.gz.*|\1|p' README.md)
+          status=0
+          if [ "$zon" != "$tag" ]; then
+            echo "build.zig.zon .version is \"$zon\", expected \"$tag\"" >&2
+            status=1
+          fi
+          if [ "$readme" != "$tag" ]; then
+            echo "README.md tarball URL points at v$readme, expected v$tag" >&2
+            status=1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "Bump the version in build.zig.zon and README.md before tagging." >&2
+            exit 1
+          fi
+          echo "Version metadata matches $GITHUB_REF_NAME."
+
   release:
     name: Create Release
-    needs: test
+    needs: [test, version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

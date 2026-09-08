@@ -94,6 +94,23 @@ Add the new format to:
 - Stress and edge-case tests go in `test/` with descriptive file names.
 - Fuzz harnesses go in `test/fuzz_<format>.zig`.
 
+## Releasing
+
+The version appears in two places, and the release workflow checks both against
+the tag before publishing:
+
+- `.version` in `build.zig.zon`
+- the tarball URL in the README install section
+
+Bump both, commit, and only then tag:
+
+```
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+Tagging first fails the release, because the workflow validates the tagged tree.
+
 ## Reporting Issues
 
 When filing a bug, please include:
