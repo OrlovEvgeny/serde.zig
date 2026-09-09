@@ -18,9 +18,9 @@ const StringId = struct {
         deserializer: anytype,
     ) @TypeOf(deserializer.*).Error!@This() {
         const str = try deserializer.deserializeString(allocator);
-        defer allocator.free(str);
+        defer serde.core.releaseString(deserializer, allocator, str);
         return .{
-            .value = std.fmt.parseInt(u64, str, 10) catch return error.InvalidNumber,
+            .value = std.fmt.parseInt(u64, str, 10) catch return deserializer.raiseError(error.InvalidNumber),
         };
     }
 };
@@ -44,11 +44,12 @@ const HexBytes = struct {
         deserializer: anytype,
     ) @TypeOf(deserializer.*).Error!@This() {
         const str = try deserializer.deserializeString(allocator);
-        defer allocator.free(str);
-        if (str.len % 2 != 0) return error.InvalidNumber;
+        defer serde.core.releaseString(deserializer, allocator, str);
+        if (str.len % 2 != 0) return deserializer.raiseError(error.InvalidNumber);
         const result = try allocator.alloc(u8, str.len / 2);
+        errdefer allocator.free(result);
         for (0..result.len) |i| {
-            result[i] = std.fmt.parseInt(u8, str[i * 2 ..][0..2], 16) catch return error.InvalidNumber;
+            result[i] = std.fmt.parseInt(u8, str[i * 2 ..][0..2], 16) catch return deserializer.raiseError(error.InvalidNumber);
         }
         return .{ .data = result };
     }

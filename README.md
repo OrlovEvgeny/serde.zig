@@ -934,11 +934,10 @@ const ArrayListAdapter = struct {
         d: anytype,
     ) @TypeOf(d.*).Error!std.ArrayList(u8) {
         const str = try d.deserializeString(allocator);
+        defer serde.core.releaseString(d, allocator, str);
         var list = std.ArrayList(u8).empty;
-        // steal the allocated string buffer
-        list.items = @constCast(str);
-        list.capacity = str.len;
-        list.items.len = str.len;
+        errdefer list.deinit(allocator);
+        try list.appendSlice(allocator, str);
         return list;
     }
 };
@@ -984,8 +983,8 @@ const StringWrappedU64 = struct {
         deserializer: anytype,
     ) @TypeOf(deserializer.*).Error!@This() {
         const str = try deserializer.deserializeString(allocator);
-        defer allocator.free(str);
-        return .{ .inner = std.fmt.parseInt(u64, str, 10) catch return error.InvalidNumber };
+        defer serde.core.releaseString(deserializer, allocator, str);
+        return .{ .inner = std.fmt.parseInt(u64, str, 10) catch return deserializer.raiseError(error.InvalidNumber) };
     }
 };
 
