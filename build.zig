@@ -199,6 +199,7 @@ pub fn build(b: *std.Build) void {
     const examples_step = b.step("examples", "Build all examples");
 
     const example_sources = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "example-managed-json", .src = "examples/managed_json/main.zig" },
         .{ .name = "example-basic-json", .src = "examples/basic_json/main.zig" },
         .{ .name = "example-config-toml", .src = "examples/config_toml/main.zig" },
         .{ .name = "example-custom-types", .src = "examples/custom_types/main.zig" },

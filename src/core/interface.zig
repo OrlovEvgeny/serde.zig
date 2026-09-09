@@ -1,5 +1,5 @@
 /// Comptime verification of Serializer and Deserializer interfaces.
-/// Whether S implements the full Serializer interface.
+/// Historical declaration-only serializer check; use assertSerializer for strict probes.
 pub fn isSerializer(comptime S: type) bool {
     return @hasDecl(S, "serializeBool") and
         @hasDecl(S, "serializeInt") and
@@ -37,7 +37,7 @@ pub fn hasKnownLengthContainers(comptime S: type) bool {
     return has_array;
 }
 
-/// Whether D implements the full Deserializer interface.
+/// Historical declaration-only deserializer check; use assertDeserializer for strict probes.
 pub fn isDeserializer(comptime D: type) bool {
     return @hasDecl(D, "deserializeBool") and
         @hasDecl(D, "deserializeInt") and

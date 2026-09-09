@@ -1,7 +1,7 @@
 //! # serde.zig
 //!
 //! A serialization framework for Zig using comptime reflection to
-//! serialize and deserialize any Zig type across multiple formats
+//! serialize and deserialize supported Zig types across multiple formats
 //! without macros, code generation, or runtime type information.
 //!
 //! ## Supported Formats
@@ -23,7 +23,9 @@
 //! ```
 //! const serde = @import("serde");
 //! const json_bytes = try serde.json.toSlice(allocator, my_struct);
-//! const result = try serde.json.fromSlice(MyStruct, allocator, json_bytes);
+//! defer allocator.free(json_bytes);
+//! var result = try serde.json.fromSliceManaged(MyStruct, allocator, json_bytes);
+//! defer result.deinit();
 //! ```
 
 pub const testing = @import("testing/mod.zig");

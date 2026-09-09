@@ -6,7 +6,77 @@
 
 Serialization framework for Zig
 
-Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zig type across JSON, MessagePack, Erlang ETF, TOML, YAML, XML, ZON, TOON, and CSV without macros, code generation, or runtime type information.
+Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize supported Zig types across JSON, MessagePack, Erlang ETF, TOML, YAML, XML, ZON, TOON, and CSV without macros, code generation, or runtime type information.
+
+## Quick Start
+
+Add the dependency (v1.2.0 is the release prepared by this tree):
+
+```sh
+zig fetch --save https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.2.0.tar.gz
+```
+
+Until the tag is published, use the development branch or a local path dependency.
+In `build.zig`, connect the public module to your executable:
+
+```zig
+const serde_dep = b.dependency("serde", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("serde", serde_dep.module("serde"));
+```
+
+This complete program serializes a value and releases both the output bytes and
+the managed parse result. [Run the example](examples/managed_json/main.zig)
+with `zig build example-managed-json`.
+
+```zig
+const std = @import("std");
+const serde = @import("serde");
+const User = struct { name: []const u8, age: u32, email: ?[]const u8 = null };
+
+pub fn main() !void {
+    const allocator = std.heap.page_allocator;
+    const bytes = try serde.json.toSlice(allocator, User{ .name = "Alice", .age = 30 });
+    defer allocator.free(bytes);
+    var parsed = try serde.json.fromSliceManaged(User, allocator, bytes);
+    defer parsed.deinit();
+    std.debug.print("{s}: {d}\n", .{ parsed.value.name, parsed.value.age });
+}
+```
+
+Choose a guide: [application author](docs/application-author.md),
+[type or adapter author](docs/type-author.md), or [format author](docs/format-author.md).
+The [extension contract](docs/extension-contract.md) and
+[capability matrix](docs/capabilities.md) define what integrations can rely on.
+
+## Installation
+
+To track development instead of a release:
+
+```sh
+zig fetch --save git+https://github.com/OrlovEvgeny/serde.zig
+```
+
+Supports Zig 0.15.2 and 0.16.0; CI also tracks Zig master.
+
+Supported Zig versions:
+
+| Zig version           | Status                                                            |
+| --------------------- | ----------------------------------------------------------------- |
+| `0.16.0`              | default toolchain, required in docs CI                               |
+| `0.15.2`              | supported compatibility baseline                                  |
+| `0.17-dev` / `master` | supported against current development snapshots and tracked in CI |
+
+## Why serde.zig?
+
+**Inferred mappings.** Declare a supported struct and serialize it without macros or code generation. Comptime reflection chooses its mapping; parsing and input validation happen at runtime.
+
+**Nine formats, shared core.** JSON, MessagePack, Erlang ETF, TOML, YAML, XML, ZON, TOON, and CSV share a generic core and similar convenience functions. Root types, writer arguments, and format capabilities differ; consult the capability matrix.
+
+**Out-of-band schemas.** Serialize the same type differently in different contexts without modifying the type itself. Essential for third-party types and API versioning.
+
+**Zero-copy JSON.** `fromSliceBorrowed` returns string slices that point directly into the input buffer when no escape sequences are present. String views avoid copying; containers and custom hooks can still allocate.
+
+**Comptime validation.** Unsupported type operations and ambiguous field names can be rejected at compile time. Missing input fields and malformed input are runtime errors. Structural backend checks are opt-in.
 
 ## Table of Contents
 
@@ -18,7 +88,7 @@ Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zi
 - [Erlang ETF / OTP 29](#erlang-etf--otp-29)
 - [Examples](#examples)
   - [Nested structs](#nested-structs)
-  - [Arena allocator](#arena-allocator-recommended-for-deserialization)
+  - [Arena allocator](#arena-allocator)
   - [Zero-copy deserialization](#zero-copy-deserialization)
   - [Pretty-printed output](#pretty-printed-output)
   - [Tagged unions](#tagged-unions)
@@ -45,79 +115,11 @@ Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize any Zi
 - [Out-of-Band Schema](#out-of-band-schema)
 - [Out-of-Band Type Overrides](#out-of-band-type-overrides)
 - [Custom Serialization](#custom-serialization)
+- [JSON diagnostics](#json-diagnostics)
 - [Error Handling](#error-handling)
 - [Performance](#performance)
 - [Tests](#tests)
 - [License](#license)
-
-## Why serde.zig?
-
-**No boilerplate.** No macros, no code generation, no build steps. Just declare a struct and serialize it. Zig's comptime reflection handles everything at compile time.
-
-**Nine formats, one API.** JSON, MessagePack, Erlang ETF, TOML, YAML, XML, ZON, TOON, and CSV share the same `toSlice`/`fromSlice`/`toWriter`/`fromReader` shape. Learn once, use everywhere.
-
-**Out-of-band schemas.** Serialize the same type differently in different contexts without modifying the type itself. Essential for third-party types and API versioning.
-
-**Zero-copy JSON.** `fromSliceBorrowed` returns string slices that point directly into the input buffer when no escape sequences are present. No allocation, no copying.
-
-**Comptime validation.** Invalid types, missing fields, and incorrect option names are caught at compile time, not at runtime.
-
-## Quick Start
-
-```zig
-const serde = @import("serde");
-
-const User = struct {
-    name: []const u8,
-    age: u32,
-    email: ?[]const u8 = null,
-};
-
-// Serialize to JSON
-const json_bytes = try serde.json.toSlice(allocator, User{
-    .name = "Alice",
-    .age = 30,
-    .email = "alice@example.com",
-});
-// => {"name":"Alice","age":30,"email":"alice@example.com"}
-
-// Deserialize from JSON
-const user = try serde.json.fromSlice(User, allocator, json_bytes);
-```
-
-## Installation
-
-Latest version from master:
-
-```sh
-zig fetch --save git+https://github.com/OrlovEvgeny/serde.zig
-```
-
-Specific release:
-
-```sh
-zig fetch --save https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.1.0.tar.gz
-```
-
-Then in your `build.zig`:
-
-```zig
-const serde_dep = b.dependency("serde", .{
-    .target = target,
-    .optimize = optimize,
-});
-exe.root_module.addImport("serde", serde_dep.module("serde"));
-```
-
-Requires Zig 0.15.2 or later, including current Zig 0.17 development builds.
-
-Supported Zig versions:
-
-| Zig version           | Status                                                            |
-| --------------------- | ----------------------------------------------------------------- |
-| `0.16.0`              | current stable, required in docs CI                               |
-| `0.15.2`              | previous stable, fully supported                                  |
-| `0.17-dev` / `master` | supported against current development snapshots and tracked in CI |
 
 ## Formats
 
@@ -133,7 +135,7 @@ Supported Zig versions:
 | TOON                | `serde.toon`    | +         | +           |
 | CSV                 | `serde.csv`     | +         | +           |
 
-Every format exposes the same API:
+The common convenience API is illustrated below using JSON. Some formats require extra writer arguments or restrict root types:
 
 ```zig
 // Serialization
@@ -990,6 +992,14 @@ const StringWrappedU64 = struct {
 const bytes = try serde.json.toSlice(allocator, StringWrappedU64{ .inner = 12345 });
 // => "12345"
 ```
+
+## JSON diagnostics
+
+Use `json.fromSliceManagedWithDiagnostics(T, allocator, input, options, &diagnostics)`
+with `var diagnostics = serde.json.Diagnostics.init(&path_buffer)` to retain the
+original error, JSON pointer, byte offset, line, and byte column. The path uses only
+the supplied buffer; a short buffer sets `path_truncated` without changing the error.
+See the [application guide](docs/application-author.md#json-diagnostics).
 
 ## Error Handling
 
