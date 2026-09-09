@@ -53,9 +53,8 @@ fn require(comptime T: type, comptime name: []const u8) void {
     if (@typeInfo(T) != .@"struct" and @typeInfo(T) != .@"union")
         @compileError(@typeName(T) ++ ": expected a serde backend/container type");
     if (!@hasDecl(T, name)) @compileError(@typeName(T) ++ ": missing serde method " ++ name);
-    if (!@typeInfo(@TypeOf(@field(T, name))).@"fn".is_generic and
-        @typeInfo(@TypeOf(@field(T, name))).@"fn".return_type == null)
-        @compileError(@typeName(T) ++ "." ++ name ++ ": expected a return type");
+    if (@typeInfo(@TypeOf(@field(T, name))) != .@"fn")
+        @compileError(@typeName(T) ++ "." ++ name ++ ": expected a function");
 }
 fn requireError(comptime T: type) void {
     if (!@hasDecl(T, "Error")) @compileError(@typeName(T) ++ ": missing serde Error declaration");
@@ -78,6 +77,14 @@ fn checkSerializer(comptime S: type, comptime visited: anytype) void {
     require(A, "end");
     checkSerializer(A, visited ++ .{S});
     checkStructContainer(payload(@TypeOf(@as(*S, undefined).beginStruct())));
+    const s: *S = undefined;
+    checkResult(S, "serializeBool", @TypeOf(s.serializeBool(true)), void);
+    checkResult(S, "serializeInt", @TypeOf(s.serializeInt(@as(i32, 1))), void);
+    checkResult(S, "serializeFloat", @TypeOf(s.serializeFloat(@as(f64, 1))), void);
+    checkResult(S, "serializeString", @TypeOf(s.serializeString("")), void);
+    checkResult(S, "serializeNull", @TypeOf(s.serializeNull()), void);
+    checkResult(S, "serializeVoid", @TypeOf(s.serializeVoid()), void);
+    checkResult(A, "end", @TypeOf(@as(*A, undefined).end()), void);
     if (hasKnownLengthContainers(S)) {
         const AL = payload(@TypeOf(@as(*S, undefined).beginArrayLen(0)));
         require(AL, "end");
@@ -88,6 +95,10 @@ fn checkSerializer(comptime S: type, comptime visited: anytype) void {
 fn checkStructContainer(comptime M: type) void {
     requireError(M);
     inline for (.{ "serializeField", "serializeEntry", "end" }) |name| require(M, name);
+    const m: *M = undefined;
+    checkResult(M, "serializeField", @TypeOf(m.serializeField("key", true)), void);
+    checkResult(M, "serializeEntry", @TypeOf(m.serializeEntry(@as([]const u8, "key"), true)), void);
+    checkResult(M, "end", @TypeOf(m.end()), void);
 }
 
 /// Validate the full core deserializer contract. Restricted backends can return
@@ -100,11 +111,35 @@ pub fn assertDeserializer(comptime D: type) void {
         requireError(M);
         for (.{ "nextKey", "nextValue", "skipValue", "raiseError" }) |name| require(M, name);
         const A = payload(@TypeOf(@as(*D, undefined).deserializeSeqAccess()));
+        requireError(A);
         require(A, "nextElement");
+        const d: *D = undefined;
+        const allocator: @import("std").mem.Allocator = undefined;
+        checkResult(D, "deserializeBool", @TypeOf(d.deserializeBool()), bool);
+        checkResult(D, "deserializeInt", @TypeOf(d.deserializeInt(i32)), i32);
+        checkResult(D, "deserializeFloat", @TypeOf(d.deserializeFloat(f64)), f64);
+        checkResult(D, "deserializeString", @TypeOf(d.deserializeString(allocator)), []const u8);
+        checkResult(D, "deserializeVoid", @TypeOf(d.deserializeVoid()), void);
+        checkResult(D, "deserializeOptional", @TypeOf(d.deserializeOptional(i32, allocator)), ?i32);
+        const E = enum { item };
+        const U = union(enum) { item: i32 };
+        checkResult(D, "deserializeEnum", @TypeOf(d.deserializeEnum(E)), E);
+        checkResult(D, "deserializeUnion", @TypeOf(d.deserializeUnion(U, allocator)), U);
+        checkResult(M, "nextKey", @TypeOf(@as(*M, undefined).nextKey(allocator)), ?[]const u8);
+        checkResult(M, "nextValue", @TypeOf(@as(*M, undefined).nextValue(i32, allocator)), i32);
+        checkResult(M, "skipValue", @TypeOf(@as(*M, undefined).skipValue()), void);
+        checkResult(A, "nextElement", @TypeOf(@as(*A, undefined).nextElement(i32, allocator)), ?i32);
+        if (@TypeOf(d.raiseError(error.MissingField)) != D.Error or @TypeOf(@as(*M, undefined).raiseError(error.MissingField)) != M.Error)
+            @compileError("serde raiseError must return the backend Error set");
         if (@hasDecl(D, "serde_protocol")) {
             const P = D.serde_protocol;
             if (@hasDecl(P, "checkpoint") != @hasDecl(P, "restore"))
                 @compileError(@typeName(D) ++ ": declare both serde_protocol.checkpoint and serde_protocol.restore");
         }
     }
+}
+
+fn checkResult(comptime Owner: type, comptime method: []const u8, comptime Result: type, comptime Expected: type) void {
+    if (@typeInfo(Result) != .error_union or @typeInfo(Result).error_union.payload != Expected)
+        @compileError(@typeName(Owner) ++ "." ++ method ++ ": expected an error union with payload " ++ @typeName(Expected));
 }

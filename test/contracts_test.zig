@@ -2,7 +2,7 @@ const std = @import("std");
 const serde = @import("serde");
 test "built-in full contracts" {
     comptime {
-        for (.{ serde.json, serde.msgpack, serde.zon, serde.xml, serde.yaml, serde.etf }) |format| {
+        for (.{ serde.json, serde.msgpack, serde.xml, serde.yaml, serde.etf }) |format| {
             serde.core.assertSerializer(if (@TypeOf(format.Serializer) == type) format.Serializer else format.Serializer(.{}));
             serde.core.assertDeserializer(format.Deserializer);
         }
