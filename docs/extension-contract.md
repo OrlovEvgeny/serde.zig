@@ -41,6 +41,10 @@ It serializes nested values through `serde.serialize`; calling scalar methods
 alone loses user hooks. Containers must handle values whose only supported
 operation is a custom serialization hook, including the core's adapter wrappers.
 
+Values and strings passed to serialization methods may come from a hook's local
+scratch buffer. Consume them during the call or keep an owned copy; do not retain
+borrowed pointers after returning.
+
 Call `end` exactly once on success. The core calls optional container `deinit()`
 on both success and failure; it must release temporary resources without adding
 output or freeing a completed result. A failed backend may have partially written

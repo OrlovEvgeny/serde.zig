@@ -23,7 +23,8 @@ test "an external adapter survives nested containers" {
     const value = T{ .ids = .{ .{ .raw = 1 }, .{ .raw = 2 } } };
     const adapters = .{.{ Id, IdAdapter }};
     var buffer: [16]serde.testing.Token = undefined;
-    var s = serde.testing.TokenSerializer.init(&buffer);
+    var s = serde.testing.TokenSerializer.init(std.testing.allocator, &buffer);
+    defer s.deinit();
     try serde.serializeWith(T, value, &s, adapters);
     const expected = [_]serde.testing.Token{ .object_begin, .{ .string = "ids" }, .array_begin, .{ .uint = .{ .bits = 64, .value = 1 } }, .{ .uint = .{ .bits = 64, .value = 2 } }, .array_end, .object_end };
     try std.testing.expectEqualDeep(@as([]const serde.testing.Token, &expected), s.tokens());

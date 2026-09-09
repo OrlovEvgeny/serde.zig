@@ -1,5 +1,5 @@
-//! Format-independent event testing. Strings in emitted tokens borrow the value;
-//! keep it alive while inspecting the token buffer. Deserialization copies strings.
+//! Format-independent event testing. Serialized strings are copied and remain
+//! valid until TokenSerializer.deinit. Deserialization also copies strings.
 const std = @import("std");
 const core = @import("../core/mod.zig");
 const reflect = @import("../reflect.zig");
@@ -20,11 +20,20 @@ pub const Token = union(enum) {
 };
 
 pub const TokenSerializer = struct {
+    allocator: Allocator,
     buffer: []Token,
     written: usize = 0,
     pub const Error = error{ OutOfMemory, UnsupportedNumber, WrongType };
-    pub fn init(buffer: []Token) TokenSerializer {
-        return .{ .buffer = buffer };
+    pub fn init(allocator: Allocator, buffer: []Token) TokenSerializer {
+        return .{ .allocator = allocator, .buffer = buffer };
+    }
+    /// Free owned string payloads; the caller continues to own the token buffer.
+    pub fn deinit(self: *TokenSerializer) void {
+        for (self.tokens()) |token| switch (token) {
+            .string => |value| self.allocator.free(value),
+            else => {},
+        };
+        self.written = 0;
     }
     pub fn tokens(self: *const TokenSerializer) []const Token {
         return self.buffer[0..self.written];
@@ -46,7 +55,9 @@ pub const TokenSerializer = struct {
         try self.emit(.{ .float = .{ .bits = @typeInfo(@TypeOf(value)).float.bits, .value = value } });
     }
     pub fn serializeString(self: *TokenSerializer, value: []const u8) Error!void {
-        try self.emit(.{ .string = value });
+        const copy = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(copy);
+        try self.emit(.{ .string = copy });
     }
     pub fn serializeNull(self: *TokenSerializer) Error!void {
         try self.emit(.null);
@@ -298,7 +309,8 @@ pub const SeqAccess = struct {
 pub fn expectSerialize(value: anytype, expected: []const Token) !void {
     const buffer = try std.testing.allocator.alloc(Token, expected.len + 1);
     defer std.testing.allocator.free(buffer);
-    var serializer = TokenSerializer.init(buffer);
+    var serializer = TokenSerializer.init(std.testing.allocator, buffer);
+    defer serializer.deinit();
     try core.serialize(@TypeOf(value), value, &serializer, .{});
     try std.testing.expectEqualDeep(expected, serializer.tokens());
 }

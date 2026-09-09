@@ -46,12 +46,14 @@ test "tokens external schema flatten aliases and nested adapters" {
     const adapters = .{.{ Wrapped, Adapter }};
     const value = T{ .inner = .{ .count = 3 }, .list = &.{.{ .n = 9 }} };
     var buffer: [20]Token = undefined;
-    var s = t.TokenSerializer.init(&buffer);
+    var s = t.TokenSerializer.init(A, &buffer);
+    defer s.deinit();
     try serde.serializeSchema(T, value, &s, schema, adapters);
     const expected = [_]Token{ .object_begin, .{ .string = "count" }, .{ .uint = .{ .bits = 16, .value = 3 } }, .{ .string = "values" }, .array_begin, .{ .uint = .{ .bits = 16, .value = 9 } }, .array_end, .object_end };
     try std.testing.expectEqualDeep(@as([]const Token, &expected), s.tokens());
-    buffer[3] = .{ .string = "old" };
-    var d = t.TokenDeserializer.init(s.tokens());
+    var aliased = expected;
+    aliased[3] = .{ .string = "old" };
+    var d = t.TokenDeserializer.init(&aliased);
     const result = try serde.deserializeSchema(T, A, &d, schema, adapters);
     defer serde.core.freeAllocated(T, result, A);
     try d.finish();
@@ -66,4 +68,37 @@ test "tokens reject missing boundaries and trailing events" {
     try std.testing.expectError(error.UnexpectedToken, d.finish());
     d = t.TokenDeserializer.init(&.{ .object_begin, .{ .string = "unknown" }, .array_end, .object_end });
     try std.testing.expectError(error.UnexpectedToken, serde.deserialize(struct {}, A, &d, .{}));
+}
+
+test "tokens own strings emitted from scratch buffers and hooks" {
+    var buffer: [4]Token = undefined;
+    var s = t.TokenSerializer.init(A, &buffer);
+    defer s.deinit();
+    var scratch = [_]u8{ 'o', 'l', 'd' };
+    try s.serializeString(&scratch);
+    @memset(&scratch, 'x');
+    try std.testing.expectEqualStrings("old", s.tokens()[0].string);
+    const Hook = struct {
+        value: u8,
+        pub fn zerdeSerialize(v: @This(), serializer: anytype) @TypeOf(serializer.*).Error!void {
+            var temporary: [3]u8 = undefined;
+            const text = std.fmt.bufPrint(&temporary, "{d}", .{v.value}) catch unreachable;
+            return serializer.serializeString(text);
+        }
+    };
+    try t.expectSerialize(Hook{ .value = 123 }, &.{.{ .string = "123" }});
+}
+
+fn tokenAllocationFailures(allocator: std.mem.Allocator) !void {
+    var buffer: [4]Token = undefined;
+    var s = t.TokenSerializer.init(allocator, &buffer);
+    defer s.deinit();
+    try serde.serialize(struct { text: []const u8 }, .{ .text = "owned" }, &s, .{});
+}
+test "tokens release string copies after allocation and capacity failures" {
+    try std.testing.checkAllAllocationFailures(A, tokenAllocationFailures, .{});
+    var buffer: [0]Token = .{};
+    var s = t.TokenSerializer.init(A, &buffer);
+    defer s.deinit();
+    try std.testing.expectError(error.OutOfMemory, s.serializeString("owned"));
 }

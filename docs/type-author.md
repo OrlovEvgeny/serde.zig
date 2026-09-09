@@ -56,10 +56,12 @@ are string events. Maps can emit nonstring keys, but the current generic map
 reader accepts string keys. No `Value` conversion is involved.
 
 For schemas and external adapters, use a caller-owned `[]Token` buffer:
-`var s = TokenSerializer.init(&buffer)`, then `serde.serializeSchema` or
-`serializeWith`. Inspect `s.tokens()`. Tokens borrow serialized string memory,
-so keep the original value alive. Insufficient token capacity returns
-`OutOfMemory`; it does not allocate. `TokenDeserializer.init(events)` copies
+`var s = TokenSerializer.init(allocator, &buffer)`, then `serde.serializeSchema` or
+`serializeWith`. Defer `s.deinit()` and inspect `s.tokens()` before that cleanup.
+The serializer copies string payloads, including temporary buffers emitted by
+custom hooks. Do not replace its owned string entries before deinitializing it.
+The caller owns the token buffer; string copies use the supplied allocator.
+Insufficient token capacity or allocation failure returns `OutOfMemory`. `TokenDeserializer.init(events)` copies
 returned strings using the provided allocator, and `finish()` rejects unused
 events. `expectDeserialize` uses an arena and releases it after comparison.
 
