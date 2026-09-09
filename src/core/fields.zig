@@ -3,31 +3,22 @@ const std = @import("std");
 const reflect = @import("../reflect.zig");
 const opts = @import("options.zig");
 
-pub fn leaves(comptime T: type, comptime schema: anytype, comptime dir: opts.Direction) @TypeOf(expand(T, schema, dir, &.{}, 0, T, schema)) {
-    return comptime expand(T, schema, dir, &.{}, 0, T, schema);
+pub fn leaves(comptime T: type, comptime schema: anytype, comptime dir: opts.Direction) []const type {
+    return comptime expand(T, schema, dir, &.{}, T, schema);
 }
 
-fn expand(comptime T: type, comptime schema: anytype, comptime dir: opts.Direction, comptime path: []const []const u8, comptime i: usize, comptime Root: type, comptime root_schema: anytype) blk: {
+fn expand(comptime T: type, comptime schema: anytype, comptime dir: opts.Direction, comptime path: []const []const u8, comptime Root: type, comptime root_schema: anytype) []const type {
     @setEvalBranchQuota(100_000);
-    const fs = reflect.structFields(T);
-    if (i == fs.len) break :blk @TypeOf(.{});
-    const f = fs[i];
-    const next = path ++ &[_][]const u8{f.name};
-    const head = if (opts.isFlattenedFieldSchema(T, f.name, schema) and !opts.shouldSkipFieldSchema(T, f.name, dir, schema))
-        expand(f.type, {}, dir, next, 0, Root, root_schema)
-    else
-        .{Leaf(T, schema, f, next, Root, root_schema)};
-    break :blk @TypeOf(head ++ expand(T, schema, dir, path, i + 1, Root, root_schema));
-} {
-    const fs = comptime reflect.structFields(T);
-    if (comptime i == fs.len) return .{};
-    const f = fs[i];
-    const next = path ++ &[_][]const u8{f.name};
-    const head = comptime if (opts.isFlattenedFieldSchema(T, f.name, schema) and !opts.shouldSkipFieldSchema(T, f.name, dir, schema))
-        expand(f.type, {}, dir, next, 0, Root, root_schema)
-    else
-        .{Leaf(T, schema, f, next, Root, root_schema)};
-    return head ++ expand(T, schema, dir, path, i + 1, Root, root_schema);
+    var result: []const type = &.{};
+    for (reflect.structFields(T)) |f| {
+        const next = path ++ &[_][]const u8{f.name};
+        const head = if (opts.isFlattenedFieldSchema(T, f.name, schema) and !opts.shouldSkipFieldSchema(T, f.name, dir, schema))
+            expand(f.type, {}, dir, next, Root, root_schema)
+        else
+            &[_]type{Leaf(T, schema, f, next, Root, root_schema)};
+        result = result ++ head;
+    }
+    return result;
 }
 
 fn Leaf(comptime P: type, comptime s: anytype, comptime f: anytype, comptime p: []const []const u8, comptime Root: type, comptime root_schema: anytype) type {
