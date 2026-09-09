@@ -185,7 +185,7 @@ fn deserializeTyped(
     var deserializer = Deserializer.init(prepared.body, options);
     const result = try core_deserialize.deserializeSchema(T, allocator, &deserializer, schema, map);
     if (deserializer.pos != deserializer.input.len) {
-        core_deserialize.freeAllocated(T, result, allocator);
+        core_deserialize.freeAllocatedSchema(T, result, allocator, schema);
         return error.TrailingData;
     }
     return result;
@@ -211,6 +211,16 @@ const PreparedInput = struct {
         if (self.owned) |owned| allocator.free(owned);
     }
 };
+
+/// Parse into a result that owns a separate arena. Release it with `.deinit()`.
+pub fn fromSliceManaged(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !@import("../../core/parsed.zig").Parsed(T) {
+    return fromSliceManagedSchema(T, allocator, input, {});
+}
+
+/// Parse with an external schema into an owning result.
+pub fn fromSliceManagedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !@import("../../core/parsed.zig").Parsed(T) {
+    return @import("../../core/parsed.zig").parse(T, allocator, input, schema, @This());
+}
 
 test "typed canonical profile roundtrip" {
     const testing = std.testing;

@@ -27,7 +27,7 @@ jobs:
       # so just ignore fmt checking on master for now?
       - name: Check formatting
         if: matrix.zig != 'master'
-        run: zig fmt --check src/ bench/ build.zig
+        run: zig fmt --check src/ bench/ test/ examples/ build.zig
 
       - name: Build
         run: zig build
@@ -35,8 +35,14 @@ jobs:
       - name: Run tests
         run: zig build test
 
-      - name: Build fuzz targets
-        run: zig build fuzz
+      - name: Run ReleaseSafe tests
+        run: zig build test -Doptimize=ReleaseSafe
+
+      - name: Check compile-time field diagnostics
+        run: python test/check_compile_errors.py
+
+      - name: Build examples and fuzz targets
+        run: zig build examples fuzz
 
   benchmark:
     name: Benchmarks
@@ -64,6 +70,7 @@ jobs:
           baseline="benchmark-baseline-${{ matrix.zig }}.json"
           if [ "${{ github.event_name }}" = "pull_request" ] && [ -d serde-base ]; then
             if (cd serde-base && zig build -l | grep -q '^  bench'); then
+              python3 bench/prepare_baseline.py serde-base
               # Older build.zig reads bench arguments from `zig build bench -- ...`
               # instead of -Dbench-* build options; detect which style the base
               # branch supports before invoking it.
@@ -73,7 +80,7 @@ jobs:
                 (cd serde-base && zig build bench -- --format json --compare std_json --out "../$baseline")
               fi
             else
-              printf '{"schema_version":1,"results":[]}\n' > "$baseline"
+              printf '{"schema_version":3,"allocator":"smp","results":[]}\n' > "$baseline"
             fi
           else
             cp bench/baseline.json "$baseline"

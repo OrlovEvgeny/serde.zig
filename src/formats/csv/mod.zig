@@ -13,6 +13,7 @@ const core_serialize = @import("../../core/serialize.zig");
 const core_deserialize = @import("../../core/deserialize.zig");
 const kind_mod = @import("../../core/kind.zig");
 const options = @import("../../core/options.zig");
+const field_meta = @import("../../core/fields.zig");
 const reflect = @import("../../reflect.zig");
 
 pub const Scanner = scanner_mod.Scanner;
@@ -32,6 +33,7 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 /// Serialize a slice of structs to CSV with a specific dialect.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, dialect: Dialect) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterWith(&aw.writer, value, dialect);
     return aw.toOwnedSlice();
 }
@@ -80,6 +82,7 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 /// Serialize a slice of structs to CSV with a specific dialect and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, dialect: Dialect, comptime schema: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterWithSchema(&aw.writer, value, dialect, schema);
     return aw.toOwnedSlice();
 }
@@ -131,7 +134,10 @@ pub fn fromSliceWithSchema(comptime T: type, allocator: std.mem.Allocator, input
                 try scanner_mod.unquoteField(allocator, field.raw, dialect.quote)
             else
                 allocator.dupe(u8, field.raw) catch return error.OutOfMemory;
-            hdrs.append(allocator, name) catch return error.OutOfMemory;
+            hdrs.append(allocator, name) catch {
+                allocator.free(name);
+                return error.OutOfMemory;
+            };
         }
         header_fields = hdrs.toOwnedSlice(allocator) catch return error.OutOfMemory;
     }
@@ -141,7 +147,10 @@ pub fn fromSliceWithSchema(comptime T: type, allocator: std.mem.Allocator, input
     }
 
     var items: std.ArrayList(ElemType) = .empty;
-    errdefer items.deinit(allocator);
+    errdefer {
+        for (items.items) |elem| core_deserialize.freeAllocatedSchema(ElemType, elem, allocator, schema);
+        items.deinit(allocator);
+    }
 
     while (try scanner.readRow(allocator)) |row| {
         defer allocator.free(row);
@@ -149,7 +158,10 @@ pub fn fromSliceWithSchema(comptime T: type, allocator: std.mem.Allocator, input
 
         var deser = Deserializer.initWith(header_fields, row, .{ .strict_field_count = dialect.strict_field_count });
         const elem = try core_deserialize.deserializeSchema(ElemType, allocator, &deser, schema, .{});
-        items.append(allocator, elem) catch return error.OutOfMemory;
+        items.append(allocator, elem) catch {
+            core_deserialize.freeAllocatedSchema(ElemType, elem, allocator, schema);
+            return error.OutOfMemory;
+        };
     }
 
     return items.toOwnedSlice(allocator) catch return error.OutOfMemory;
@@ -163,10 +175,10 @@ pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: 
 }
 
 fn writeHeaderRowSchema(comptime T: type, ser: *Serializer, comptime schema: anytype) SerializeError!void {
-    inline for (reflect.structFields(T)) |field| {
-        if (comptime options.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
-        const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
-        try ser.serializeString(wire_name);
+    comptime field_meta.validate(T, schema, .serialize);
+    inline for (comptime field_meta.leaves(T, schema, .serialize)) |F| {
+        if (comptime options.shouldSkipFieldSchema(F.Parent, F.field.name, .serialize, F.schema)) continue;
+        try ser.serializeString(comptime options.wireFieldNameForDir(F.Parent, F.field.name, F.schema, .serialize));
     }
     try ser.endRow();
 }
@@ -179,57 +191,11 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 
 /// Deserialize CSV into a slice of structs with a specific dialect.
 pub fn fromSliceWith(comptime T: type, allocator: std.mem.Allocator, input: []const u8, dialect: Dialect) !T {
-    const ElemType = comptime getStructElem(T);
-
-    var scanner = Scanner.init(input, dialect);
-
-    // Parse header row.
-    var header_fields: []const []const u8 = &.{};
-    if (dialect.has_header) {
-        const row = (try scanner.readRow(allocator)) orelse return allocator.alloc(ElemType, 0) catch return error.OutOfMemory;
-        defer allocator.free(row);
-        var hdrs: std.ArrayList([]const u8) = .empty;
-        errdefer {
-            for (hdrs.items) |h| allocator.free(h);
-            hdrs.deinit(allocator);
-        }
-        for (row) |field| {
-            const name = if (field.quoted)
-                try scanner_mod.unquoteField(allocator, field.raw, dialect.quote)
-            else
-                allocator.dupe(u8, field.raw) catch return error.OutOfMemory;
-            hdrs.append(allocator, name) catch return error.OutOfMemory;
-        }
-        header_fields = hdrs.toOwnedSlice(allocator) catch return error.OutOfMemory;
-    }
-    defer {
-        for (header_fields) |h| allocator.free(h);
-        allocator.free(header_fields);
-    }
-
-    // Parse data rows.
-    var items: std.ArrayList(ElemType) = .empty;
-    errdefer items.deinit(allocator);
-
-    while (try scanner.readRow(allocator)) |row| {
-        defer allocator.free(row);
-        if (row.len == 0) continue; // skip empty rows
-
-        var deser = Deserializer.initWith(header_fields, row, .{ .strict_field_count = dialect.strict_field_count });
-        const elem = try core_deserialize.deserialize(ElemType, allocator, &deser, .{});
-        items.append(allocator, elem) catch return error.OutOfMemory;
-    }
-
-    return items.toOwnedSlice(allocator) catch return error.OutOfMemory;
+    return fromSliceWithSchema(T, allocator, input, dialect, {});
 }
 
 fn writeHeaderRow(comptime T: type, ser: *Serializer) SerializeError!void {
-    inline for (reflect.structFields(T)) |field| {
-        if (comptime options.shouldSkipField(T, field.name, .serialize)) continue;
-        const wire_name = comptime options.wireFieldNameForDir(T, field.name, {}, .serialize);
-        try ser.serializeString(wire_name);
-    }
-    try ser.endRow();
+    return writeHeaderRowSchema(T, ser, {});
 }
 
 const SerializeError = serializer_mod.SerializeError;
@@ -295,7 +261,10 @@ pub fn StreamingDeserializer(comptime T: type) type {
                         try scanner_mod.unquoteField(allocator, field.raw, dialect.quote)
                     else
                         allocator.dupe(u8, field.raw) catch return error.OutOfMemory;
-                    hdrs.append(allocator, name) catch return error.OutOfMemory;
+                    hdrs.append(allocator, name) catch {
+                        allocator.free(name);
+                        return error.OutOfMemory;
+                    };
                 }
                 header_fields = hdrs.toOwnedSlice(allocator) catch return error.OutOfMemory;
             }
@@ -351,6 +320,16 @@ pub fn fromValue(comptime T: type, allocator: std.mem.Allocator, value: CoreValu
 }
 
 const testing = std.testing;
+
+/// Parse into a result that owns a separate arena. Release it with `.deinit()`.
+pub fn fromSliceManaged(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !@import("../../core/parsed.zig").Parsed(T) {
+    return fromSliceManagedSchema(T, allocator, input, {});
+}
+
+/// Parse with an external schema into an owning result.
+pub fn fromSliceManagedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !@import("../../core/parsed.zig").Parsed(T) {
+    return @import("../../core/parsed.zig").parse(T, allocator, input, schema, @This());
+}
 
 test "roundtrip flat struct" {
     const Row = struct { x: i32, y: i32 };

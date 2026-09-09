@@ -50,8 +50,8 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8, opts: Options) Par
         .input = input,
         .options = opts,
     };
-    try p.scanLines();
     defer p.lines.deinit(allocator);
+    try p.scanLines();
 
     var value = try p.parseRoot();
     errdefer value.deinit(allocator);

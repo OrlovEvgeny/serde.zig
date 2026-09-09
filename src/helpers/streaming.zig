@@ -41,12 +41,18 @@ pub fn StreamingDeserializer(comptime T: type) type {
         // Read until newline or end-of-stream. Returns true if newline found, false if EOF.
         fn readLine(self: *Self) !bool {
             while (true) {
-                const byte_slice = self.reader.take(1) catch |err| switch (err) {
-                    error.EndOfStream => return false,
-                    else => return error.ReadFailed,
-                };
-                if (byte_slice[0] == '\n') return true;
-                self.buf.append(self.allocator, byte_slice[0]) catch return error.OutOfMemory;
+                if (self.reader.bufferedLen() == 0) {
+                    _ = self.reader.peek(1) catch |err| switch (err) {
+                        error.EndOfStream => return false,
+                        else => return error.ReadFailed,
+                    };
+                }
+                const available = self.reader.buffered();
+                const newline = std.mem.indexOfScalar(u8, available, '\n');
+                const n = newline orelse available.len;
+                try self.buf.appendSlice(self.allocator, available[0..n]);
+                self.reader.toss(n + @intFromBool(newline != null));
+                if (newline != null) return true;
             }
         }
 
@@ -102,4 +108,37 @@ test "streaming with strings" {
     try testing.expectEqualStrings("hello", (try sd.next()).?.text);
     try testing.expectEqualStrings("world", (try sd.next()).?.text);
     try testing.expectEqual(@as(?Msg, null), try sd.next());
+}
+
+const ChunkedReader = struct {
+    input: []const u8,
+    pos: usize = 0,
+    calls: usize = 0,
+    reader: compat.Io.Reader,
+    fn stream(r: *compat.Io.Reader, writer: *compat.Io.Writer, limit: compat.Io.Limit) compat.Io.Reader.StreamError!usize {
+        const self: *ChunkedReader = @fieldParentPtr("reader", r);
+        if (self.pos == self.input.len) return error.EndOfStream;
+        const n = limit.minInt(@min(@as(usize, 7), self.input.len - self.pos));
+        try writer.writeAll(self.input[self.pos..][0..n]);
+        self.pos += n;
+        self.calls += 1;
+        return n;
+    }
+};
+
+test "streaming handles short reads CRLF and final line without newline" {
+    var buf: [16]u8 = undefined;
+    var source = ChunkedReader{
+        .input = "\r\n  \t\n{\"id\":123}\r\n{\"id\":456}",
+        .reader = .{ .vtable = &.{ .stream = ChunkedReader.stream }, .buffer = &buf, .seek = 0, .end = 0 },
+    };
+    const T = struct { id: u32 };
+    var stream = StreamingDeserializer(T).init(testing.allocator, &source.reader);
+    defer stream.deinit();
+    try testing.expectEqual(@as(u32, 123), (try stream.next()).?.id);
+    const capacity = stream.buf.capacity;
+    try testing.expectEqual(@as(u32, 456), (try stream.next()).?.id);
+    try testing.expectEqual(capacity, stream.buf.capacity);
+    try testing.expectEqual(@as(?T, null), try stream.next());
+    try testing.expect(source.calls > 1);
 }

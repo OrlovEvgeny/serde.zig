@@ -35,3 +35,6 @@ pub const EnumRepr = options.EnumRepr;
 pub const UnionTag = options.UnionTag;
 pub const Value = value_mod.Value;
 pub const Entry = value_mod.Entry;
+
+pub const freeAllocated = @import("deserialize.zig").freeAllocated;
+pub const freeAllocatedSchema = @import("deserialize.zig").freeAllocatedSchema;

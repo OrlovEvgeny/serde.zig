@@ -27,6 +27,7 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterWith(allocator, &aw.writer, value, opts);
     return aw.toOwnedSlice();
 }
@@ -59,6 +60,7 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opts: Options, comptime schema: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterWithSchema(allocator, &aw.writer, value, opts, schema);
     return aw.toOwnedSlice();
 }
@@ -76,6 +78,7 @@ pub fn toWriterWithSchema(allocator: std.mem.Allocator, writer: *compat.Io.Write
 
 pub fn toSliceWithMap(allocator: std.mem.Allocator, value: anytype, comptime map: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterWithMap(allocator, &aw.writer, value, map);
     return aw.toOwnedSlice();
 }
@@ -149,6 +152,16 @@ fn valueFromJsonSerialized(allocator: std.mem.Allocator, json_bytes: []u8) !Valu
 
 fn readAll(allocator: std.mem.Allocator, reader: *compat.Io.Reader) ![]u8 {
     return reader.allocRemaining(allocator, compat.Io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
+}
+
+/// Parse into a result that owns a separate arena. Release it with `.deinit()`.
+pub fn fromSliceManaged(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !@import("../../core/parsed.zig").Parsed(T) {
+    return fromSliceManagedSchema(T, allocator, input, {});
+}
+
+/// Parse with an external schema into an owning result.
+pub fn fromSliceManagedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !@import("../../core/parsed.zig").Parsed(T) {
+    return @import("../../core/parsed.zig").parse(T, allocator, input, schema, @This());
 }
 
 test "roundtrip struct" {

@@ -64,6 +64,7 @@ pub fn toWriterSchema(allocator: std.mem.Allocator, writer: *compat.Io.Writer, v
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.init(input);
     const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
+    errdefer core_deserialize.freeAllocatedSchema(T, result, allocator, schema);
     if (deser.pos != deser.input.len) return error.TrailingData;
     return result;
 }
@@ -80,6 +81,7 @@ pub fn fromReaderSchema(comptime T: type, allocator: std.mem.Allocator, reader: 
 pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.init(input);
     const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
+    errdefer core_deserialize.freeAllocated(T, result, allocator);
     if (deser.pos != deser.input.len) return error.TrailingData;
     return result;
 }
@@ -112,6 +114,16 @@ pub fn toValue(allocator: std.mem.Allocator, value: anytype) !CoreValue {
 /// Convert a dynamic Value back to a typed Zig value.
 pub fn fromValue(comptime T: type, allocator: std.mem.Allocator, value: CoreValue) !T {
     return value.toType(T, allocator);
+}
+
+/// Parse into a result that owns a separate arena. Release it with `.deinit()`.
+pub fn fromSliceManaged(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !@import("../../core/parsed.zig").Parsed(T) {
+    return fromSliceManagedSchema(T, allocator, input, {});
+}
+
+/// Parse with an external schema into an owning result.
+pub fn fromSliceManagedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !@import("../../core/parsed.zig").Parsed(T) {
+    return @import("../../core/parsed.zig").parse(T, allocator, input, schema, @This());
 }
 
 // Tests.

@@ -46,6 +46,7 @@ pub const Value = union(enum) {
             .string => |s| return .{ .string = try dupe(allocator, s) },
             .array => |items| {
                 var out = try allocator.alloc(Value, items.len);
+                @memset(out, .null);
                 errdefer {
                     for (out[0..]) |item| item.deinit(allocator);
                     allocator.free(out);
@@ -55,6 +56,7 @@ pub const Value = union(enum) {
             },
             .object => |entries| {
                 var out = try allocator.alloc(Entry, entries.len);
+                @memset(out, .{ .key = &.{}, .value = .null, .quoted = false });
                 errdefer {
                     for (out[0..]) |entry| {
                         allocator.free(entry.key);
@@ -63,9 +65,12 @@ pub const Value = union(enum) {
                     allocator.free(out);
                 }
                 for (entries, 0..) |entry, i| {
+                    const key = try dupe(allocator, entry.key);
+                    errdefer allocator.free(key);
+                    const child = try entry.value.clone(allocator);
                     out[i] = .{
-                        .key = try dupe(allocator, entry.key),
-                        .value = try entry.value.clone(allocator),
+                        .key = key,
+                        .value = child,
                         .quoted = entry.quoted,
                     };
                 }

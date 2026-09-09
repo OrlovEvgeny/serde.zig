@@ -96,28 +96,32 @@ pub const StructSerializer = struct {
     pub const Error = SerializeError;
 
     pub fn serializeField(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
+        return self.serializeFieldWithMap(key, value, .{});
+    }
+
+    pub fn serializeFieldWithMap(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime map: anytype) Error!void {
         const T = @TypeOf(value);
-        const k = comptime kind_mod.typeKind(T);
+        const k = comptime core_serialize.kindWithMap(T, map);
 
         // Optional null: omit entirely (TOML has no null).
         if (k == .optional) {
             if (value == null) return;
-            return self.serializeField(key, value.?);
+            return self.serializeFieldWithMap(key, value.?, map);
         }
 
         // Sub-tables and array-of-tables are deferred to appear after scalar fields.
         // Unions with payload variants also serialize as sub-tables (external tag
         // produces a struct with one key = variant name).
         if (k == .@"struct" or k == .map) {
-            try self.deferSubTable(key, value, false);
+            try self.deferSubTable(key, value, false, map);
             return;
         }
         if (k == .@"union" and comptime unionHasPayload(T)) {
-            try self.deferSubTable(key, value, false);
+            try self.deferSubTable(key, value, false, map);
             return;
         }
-        if ((k == .slice or k == .array) and comptime isStructSlice(T)) {
-            try self.deferArrayOfTables(key, value);
+        if ((k == .slice or k == .array) and comptime isStructSliceWithMap(T, map)) {
+            try self.deferArrayOfTables(key, value, map);
             return;
         }
 
@@ -130,21 +134,25 @@ pub const StructSerializer = struct {
             .allocator = self.allocator,
             .path = self.path,
         };
-        try core_serialize.serialize(T, value, &child, .{});
+        try core_serialize.serialize(T, value, &child, map);
         self.out.writeByte('\n') catch return error.WriteFailed;
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
+        return self.serializeEntryWithMap(key, value, .{});
+    }
+
+    pub fn serializeEntryWithMap(self: *StructSerializer, key: anytype, value: anytype, comptime map: anytype) Error!void {
         const V = @TypeOf(value);
-        const k = comptime kind_mod.typeKind(V);
+        const k = comptime core_serialize.kindWithMap(V, map);
 
         if (k == .optional) {
             if (value == null) return;
-            return self.serializeEntry(key, value.?);
+            return self.serializeEntryWithMap(key, value.?, map);
         }
 
         if (k == .@"struct" or k == .map or (k == .@"union" and comptime unionHasPayload(V))) {
-            try self.deferSubTableDynamic(key, value);
+            try self.deferSubTableDynamic(key, value, map);
             return;
         }
 
@@ -163,14 +171,16 @@ pub const StructSerializer = struct {
             .allocator = self.allocator,
             .path = self.path,
         };
-        try core_serialize.serialize(V, value, &child, .{});
+        try core_serialize.serialize(V, value, &child, map);
         self.out.writeByte('\n') catch return error.WriteFailed;
     }
 
-    fn deferSubTableDynamic(self: *StructSerializer, key: []const u8, value: anytype) Error!void {
+    fn deferSubTableDynamic(self: *StructSerializer, key: []const u8, value: anytype, comptime map: anytype) Error!void {
         var aw: compat.Io.Writer.Allocating = .init(self.allocator);
+        defer aw.deinit();
 
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
+        defer self.allocator.free(new_path);
         @memcpy(new_path[0..self.path.len], self.path);
         new_path[self.path.len] = key;
 
@@ -187,12 +197,7 @@ pub const StructSerializer = struct {
             .allocator = self.allocator,
             .path = new_path,
         };
-        core_serialize.serialize(@TypeOf(value), value, &child_ser, .{}) catch {
-            self.allocator.free(new_path);
-            aw.deinit();
-            return error.WriteFailed;
-        };
-        self.allocator.free(new_path);
+        try core_serialize.serialize(@TypeOf(value), value, &child_ser, map);
 
         const data = aw.toOwnedSlice() catch return error.OutOfMemory;
         self.deferred.append(self.allocator, .{
@@ -216,19 +221,26 @@ pub const StructSerializer = struct {
         self.cleanup();
     }
 
+    pub fn deinit(self: *StructSerializer) void {
+        self.cleanup();
+    }
+
     fn cleanup(self: *StructSerializer) void {
         for (self.deferred.items) |d| {
             self.allocator.free(d.data);
         }
         self.deferred.deinit(self.allocator);
+        self.deferred = .empty;
     }
 
-    fn deferSubTable(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime is_aot_entry: bool) Error!void {
+    fn deferSubTable(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime is_aot_entry: bool, comptime map: anytype) Error!void {
         _ = is_aot_entry;
         var aw: compat.Io.Writer.Allocating = .init(self.allocator);
+        defer aw.deinit();
 
         // Build the new path.
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
+        defer self.allocator.free(new_path);
         @memcpy(new_path[0..self.path.len], self.path);
         new_path[self.path.len] = key;
 
@@ -247,12 +259,7 @@ pub const StructSerializer = struct {
             .allocator = self.allocator,
             .path = new_path,
         };
-        core_serialize.serialize(@TypeOf(value), value, &child_ser, .{}) catch {
-            self.allocator.free(new_path);
-            aw.deinit();
-            return error.WriteFailed;
-        };
-        self.allocator.free(new_path);
+        try core_serialize.serialize(@TypeOf(value), value, &child_ser, map);
 
         const data = aw.toOwnedSlice() catch return error.OutOfMemory;
         self.deferred.append(self.allocator, .{
@@ -265,10 +272,12 @@ pub const StructSerializer = struct {
         };
     }
 
-    fn deferArrayOfTables(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
+    fn deferArrayOfTables(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime map: anytype) Error!void {
         var aw: compat.Io.Writer.Allocating = .init(self.allocator);
+        defer aw.deinit();
 
         const new_path = self.allocator.alloc([]const u8, self.path.len + 1) catch return error.OutOfMemory;
+        defer self.allocator.free(new_path);
         @memcpy(new_path[0..self.path.len], self.path);
         new_path[self.path.len] = key;
 
@@ -287,13 +296,8 @@ pub const StructSerializer = struct {
                 .path = new_path,
             };
             const ElemType = @TypeOf(elem);
-            core_serialize.serialize(ElemType, elem, &child_ser, .{}) catch {
-                self.allocator.free(new_path);
-                aw.deinit();
-                return error.WriteFailed;
-            };
+            try core_serialize.serialize(ElemType, elem, &child_ser, map);
         }
-        self.allocator.free(new_path);
 
         const data = aw.toOwnedSlice() catch return error.OutOfMemory;
         self.deferred.append(self.allocator, .{
@@ -625,4 +629,9 @@ test "serialize void" {
     const s = try serializeToString({});
     defer testing.allocator.free(s);
     try testing.expectEqualStrings("", s);
+}
+
+fn isStructSliceWithMap(comptime T: type, comptime map: anytype) bool {
+    const C = kind_mod.Child(T);
+    return core_serialize.kindWithMap(C, map) == .@"struct";
 }

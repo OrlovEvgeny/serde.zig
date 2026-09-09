@@ -6,6 +6,7 @@ pub const Value = value_mod.Value;
 
 pub fn toJsonSlice(allocator: std.mem.Allocator, value: Value) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try writeJson(&aw.writer, value);
     return aw.toOwnedSlice();
 }

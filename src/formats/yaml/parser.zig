@@ -69,7 +69,10 @@ pub fn parseWith(allocator: Allocator, input: []const u8, opts: ParseOptions) Pa
         .anchors = std.StringHashMap(Value).init(allocator),
         .options = opts,
     };
-    defer p.anchors.deinit();
+    defer {
+        p.clearAnchors();
+        p.anchors.deinit();
+    }
     return p.parseDocument();
 }
 
@@ -92,7 +95,10 @@ pub fn parseAllWith(allocator: Allocator, input: []const u8, opts: ParseOptions)
         .anchors = std.StringHashMap(Value).init(allocator),
         .options = opts,
     };
-    defer p.anchors.deinit();
+    defer {
+        p.clearAnchors();
+        p.anchors.deinit();
+    }
 
     while (true) {
         p.skipWhitespaceAndComments();
@@ -108,9 +114,12 @@ pub fn parseAllWith(allocator: Allocator, input: []const u8, opts: ParseOptions)
         }
 
         // YAML 1.2 §3.2.2.2: anchors are scoped to the document they appear in.
-        p.anchors.clearRetainingCapacity();
+        p.clearAnchors();
         const doc = try p.parseDocument();
-        docs.append(allocator, doc) catch return error.OutOfMemory;
+        docs.append(allocator, doc) catch {
+            doc.deinit(allocator);
+            return error.OutOfMemory;
+        };
     }
 
     return docs.toOwnedSlice(allocator) catch return error.OutOfMemory;
@@ -206,7 +215,7 @@ const Parser = struct {
             if (tag != null) {
                 result = .{ .string = self.allocator.dupe(u8, plain) catch return error.OutOfMemory };
             } else {
-                result = resolveScalarTypeWith(plain, .plain, self.options);
+                result = try self.resolveOwned(plain);
             }
         }
 
@@ -215,13 +224,36 @@ const Parser = struct {
         }
 
         if (anchor_name) |name| {
-            self.anchors.put(name, result) catch return error.OutOfMemory;
+            self.saveAnchor(name, result) catch |err| {
+                result.deinit(self.allocator);
+                return err;
+            };
         }
 
         return result;
     }
 
+    fn clearAnchors(self: *Parser) void {
+        var it = self.anchors.valueIterator();
+        while (it.next()) |value| value.deinit(self.allocator);
+        self.anchors.clearRetainingCapacity();
+    }
+
+    fn saveAnchor(self: *Parser, name: []const u8, value: Value) ParseError!void {
+        const copy = try self.deepClone(&value, 0);
+        errdefer copy.deinit(self.allocator);
+        const entry = try self.anchors.getOrPut(name);
+        if (entry.found_existing) entry.value_ptr.deinit(self.allocator);
+        entry.value_ptr.* = copy;
+    }
+
+    fn resolveOwned(self: *Parser, raw: []const u8) ParseError!Value {
+        const resolved = resolveScalarTypeWith(raw, .plain, self.options);
+        return if (resolved == .string) .{ .string = try self.allocator.dupe(u8, resolved.string) } else resolved;
+    }
+
     fn applyTag(self: *Parser, tag: []const u8, value: Value) ParseError!Value {
+        errdefer value.deinit(self.allocator);
         // Recognized YAML core schema tags. Verbatim and unknown tags are
         // ignored (the value is returned as-is).
         const eq = std.mem.eql;
@@ -329,6 +361,8 @@ const Parser = struct {
 
             // Parse key.
             const key = try self.parseScalarKey();
+            var key_owned = true;
+            defer if (key_owned) self.allocator.free(key);
             self.skipWhitespaceInline();
 
             // For explicit keys the `:` may live on the next line at the same indent.
@@ -339,14 +373,12 @@ const Parser = struct {
                 self.skipWhitespaceAndComments();
                 const next_indent = self.currentIndent();
                 if (next_indent != indent) {
-                    self.allocator.free(key);
                     return error.InvalidYaml;
                 }
             }
 
             // Expect ':'.
             if (self.pos >= self.input.len or self.input[self.pos] != ':') {
-                self.allocator.free(key);
                 if (is_explicit) return error.InvalidYaml;
                 break;
             }
@@ -375,19 +407,22 @@ const Parser = struct {
                 value = try self.parseInlineValue();
             }
 
+            var value_owned = true;
+            errdefer if (value_owned) value.deinit(self.allocator);
+
             // Handle merge key.
             if (std.mem.eql(u8, key, "<<")) {
                 if (value == .mapping) {
                     var it = value.mapping.iterator();
                     while (it.next()) |entry| {
-                        const gop = map.getOrPut(self.allocator, entry.key_ptr.*) catch return error.OutOfMemory;
-                        if (!gop.found_existing) {
-                            const key_copy = self.allocator.dupe(u8, entry.key_ptr.*) catch return error.OutOfMemory;
-                            gop.key_ptr.* = key_copy;
-                            gop.value_ptr.* = try self.deepClone(entry.value_ptr, 0);
+                        if (!map.contains(entry.key_ptr.*)) {
+                            const key_copy = try self.allocator.dupe(u8, entry.key_ptr.*);
+                            errdefer self.allocator.free(key_copy);
+                            const clone = try self.deepClone(entry.value_ptr, 0);
+                            errdefer clone.deinit(self.allocator);
+                            try map.put(self.allocator, key_copy, clone);
                         }
                     }
-                    self.allocator.free(key);
                     value.deinit(self.allocator);
                     continue;
                 }
@@ -395,12 +430,14 @@ const Parser = struct {
 
             const gop = map.getOrPut(self.allocator, key) catch return error.OutOfMemory;
             if (gop.found_existing) {
-                self.allocator.free(key);
                 gop.value_ptr.deinit(self.allocator);
                 gop.value_ptr.* = value;
+                value_owned = false;
             } else {
                 gop.key_ptr.* = key;
+                key_owned = false;
                 gop.value_ptr.* = value;
+                value_owned = false;
             }
         }
 
@@ -451,7 +488,10 @@ const Parser = struct {
                 value = try self.parseSequenceItemValue(content_col);
             }
 
-            items.append(self.allocator, value) catch return error.OutOfMemory;
+            items.append(self.allocator, value) catch {
+                value.deinit(self.allocator);
+                return error.OutOfMemory;
+            };
         }
 
         return .{ .sequence = items.toOwnedSlice(self.allocator) catch return error.OutOfMemory };
@@ -496,7 +536,10 @@ const Parser = struct {
             const anchor_name = self.input[start..self.pos];
             self.skipWhitespaceInline();
             const val = try self.parseInlineValue();
-            self.anchors.put(anchor_name, val) catch return error.OutOfMemory;
+            self.saveAnchor(anchor_name, val) catch |err| {
+                val.deinit(self.allocator);
+                return err;
+            };
             return val;
         } else if (c == '*') {
             // Handle alias.
@@ -514,7 +557,7 @@ const Parser = struct {
             if (tag != null) {
                 result = .{ .string = self.allocator.dupe(u8, plain) catch return error.OutOfMemory };
             } else {
-                result = resolveScalarTypeWith(plain, .plain, self.options);
+                result = try self.resolveOwned(plain);
             }
         }
 
@@ -552,6 +595,8 @@ const Parser = struct {
             }
 
             const key = try self.parseFlowKey();
+            var key_owned = true;
+            defer if (key_owned) self.allocator.free(key);
             self.skipWhitespaceAndComments();
 
             if (self.pos >= self.input.len or self.input[self.pos] != ':')
@@ -560,15 +605,19 @@ const Parser = struct {
             self.skipWhitespaceAndComments();
 
             const value = try self.parseFlowValue();
+            var value_owned = true;
+            errdefer if (value_owned) value.deinit(self.allocator);
 
             const gop = map.getOrPut(self.allocator, key) catch return error.OutOfMemory;
             if (gop.found_existing) {
-                self.allocator.free(key);
                 gop.value_ptr.deinit(self.allocator);
                 gop.value_ptr.* = value;
+                value_owned = false;
             } else {
                 gop.key_ptr.* = key;
+                key_owned = false;
                 gop.value_ptr.* = value;
+                value_owned = false;
             }
         }
 
@@ -607,7 +656,10 @@ const Parser = struct {
             }
 
             const val = try self.parseFlowValue();
-            items.append(self.allocator, val) catch return error.OutOfMemory;
+            items.append(self.allocator, val) catch {
+                val.deinit(self.allocator);
+                return error.OutOfMemory;
+            };
         }
 
         return .{ .sequence = items.toOwnedSlice(self.allocator) catch return error.OutOfMemory };
@@ -669,7 +721,7 @@ const Parser = struct {
             self.pos += 1;
         }
         const raw = compat.trimEnd(u8, self.input[start..self.pos], " \t");
-        return resolveScalarTypeWith(raw, .plain, self.options);
+        return try self.resolveOwned(raw);
     }
 
     fn parseDoubleQuotedScalar(self: *Parser) ParseError!Value {
@@ -953,17 +1005,26 @@ const Parser = struct {
             .string => |s| .{ .string = self.allocator.dupe(u8, s) catch return error.OutOfMemory },
             .sequence => |arr| {
                 var items = self.allocator.alloc(Value, arr.len) catch return error.OutOfMemory;
+                var initialized: usize = 0;
+                errdefer {
+                    for (items[0..initialized]) |v| v.deinit(self.allocator);
+                    self.allocator.free(items);
+                }
                 for (arr, 0..) |*elem, i| {
                     items[i] = try self.deepClone(elem, depth + 1);
+                    initialized += 1;
                 }
                 return .{ .sequence = items };
             },
             .mapping => |*m| {
                 var map: Mapping = .empty;
+                errdefer freeMapping(self.allocator, &map);
                 var it = m.iterator();
                 while (it.next()) |entry| {
                     const k = self.allocator.dupe(u8, entry.key_ptr.*) catch return error.OutOfMemory;
+                    errdefer self.allocator.free(k);
                     const v = try self.deepClone(entry.value_ptr, depth + 1);
+                    errdefer v.deinit(self.allocator);
                     map.put(self.allocator, k, v) catch return error.OutOfMemory;
                 }
                 return .{ .mapping = map };
@@ -1062,7 +1123,7 @@ const Parser = struct {
 
         const plain = self.scanPlainScalar();
         self.skipToEndOfLine();
-        return resolveScalarTypeWith(plain, .plain, self.options);
+        return try self.resolveOwned(plain);
     }
 
     fn isBlockMappingKeyAt(self: *Parser, start: usize) bool {
@@ -1152,10 +1213,11 @@ const Parser = struct {
             if (self.input[self.pos] == '-' and self.isBlockSequenceIndicator()) break;
 
             const key = try self.parseScalarKey();
+            var key_owned = true;
+            defer if (key_owned) self.allocator.free(key);
             self.skipWhitespaceInline();
 
             if (self.pos >= self.input.len or self.input[self.pos] != ':') {
-                self.allocator.free(key);
                 break;
             }
             self.pos += 1;
@@ -1181,19 +1243,22 @@ const Parser = struct {
                 value = try self.parseInlineValue();
             }
 
+            var value_owned = true;
+            errdefer if (value_owned) value.deinit(self.allocator);
+
             // Handle merge key.
             if (std.mem.eql(u8, key, "<<")) {
                 if (value == .mapping) {
                     var it = value.mapping.iterator();
                     while (it.next()) |entry| {
-                        const gop = map.getOrPut(self.allocator, entry.key_ptr.*) catch return error.OutOfMemory;
-                        if (!gop.found_existing) {
-                            const key_copy = self.allocator.dupe(u8, entry.key_ptr.*) catch return error.OutOfMemory;
-                            gop.key_ptr.* = key_copy;
-                            gop.value_ptr.* = try self.deepClone(entry.value_ptr, 0);
+                        if (!map.contains(entry.key_ptr.*)) {
+                            const key_copy = try self.allocator.dupe(u8, entry.key_ptr.*);
+                            errdefer self.allocator.free(key_copy);
+                            const clone = try self.deepClone(entry.value_ptr, 0);
+                            errdefer clone.deinit(self.allocator);
+                            try map.put(self.allocator, key_copy, clone);
                         }
                     }
-                    self.allocator.free(key);
                     value.deinit(self.allocator);
                     continue;
                 }
@@ -1201,12 +1266,14 @@ const Parser = struct {
 
             const gop = map.getOrPut(self.allocator, key) catch return error.OutOfMemory;
             if (gop.found_existing) {
-                self.allocator.free(key);
                 gop.value_ptr.deinit(self.allocator);
                 gop.value_ptr.* = value;
+                value_owned = false;
             } else {
                 gop.key_ptr.* = key;
+                key_owned = false;
                 gop.value_ptr.* = value;
+                value_owned = false;
             }
         }
 

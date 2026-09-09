@@ -51,6 +51,7 @@ pub const NamingConvention = core.NamingConvention;
 pub const SkipMode = core.SkipMode;
 pub const EnumRepr = core.EnumRepr;
 pub const UnionTag = core.UnionTag;
+pub const Parsed = @import("core/parsed.zig").Parsed;
 pub const Value = core.Value;
 pub const Entry = core.Entry;
 

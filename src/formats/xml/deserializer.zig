@@ -1,6 +1,7 @@
 const std = @import("std");
 const scanner_mod = @import("scanner.zig");
 const core_deserialize = @import("../../core/deserialize.zig");
+const ownership = @import("../../core/ownership.zig");
 const reflect = @import("../../reflect.zig");
 
 const Scanner = scanner_mod.Scanner;
@@ -13,6 +14,7 @@ pub const DeserializeError = error{
     UnexpectedEof,
     UnknownField,
     MissingField,
+    DuplicateField,
     InvalidNumber,
     WrongType,
     Overflow,
@@ -61,7 +63,7 @@ pub const Deserializer = struct {
             return copy;
         }
         if (self.borrow_strings) return error.MalformedXml;
-        return Scanner.unescapeEntities(allocator, text) catch error.MalformedXml;
+        return Scanner.unescapeEntities(allocator, text) catch |err| if (err == error.OutOfMemory) error.OutOfMemory else error.MalformedXml;
     }
 
     pub fn deserializeVoid(self: *Deserializer) Error!void {
@@ -117,6 +119,7 @@ pub const Deserializer = struct {
                             return @unionInit(T, field.name, {});
                         } else {
                             const payload = try core_deserialize.deserialize(field.type, allocator, self, .{});
+                            errdefer ownership.free(field.type, payload, allocator, {}, ownership.borrowedInput(self));
                             try self.skipToClose(name);
                             return @unionInit(T, field.name, payload);
                         }
@@ -156,7 +159,10 @@ pub const Deserializer = struct {
         const Child = info.pointer.child;
 
         var items: std.ArrayList(Child) = .empty;
-        errdefer items.deinit(allocator);
+        errdefer {
+            for (items.items) |elem| ownership.free(Child, elem, allocator, {}, ownership.borrowedInput(self));
+            items.deinit(allocator);
+        }
 
         while (true) {
             const tok = try self.scanner.peek();
@@ -164,7 +170,10 @@ pub const Deserializer = struct {
                 .element_open => {
                     _ = try self.scanner.next(); // consume <item>
                     const elem = try core_deserialize.deserialize(Child, allocator, self, .{});
-                    items.append(allocator, elem) catch return error.OutOfMemory;
+                    items.append(allocator, elem) catch {
+                        ownership.free(Child, elem, allocator, {}, ownership.borrowedInput(self));
+                        return error.OutOfMemory;
+                    };
                     // Consume closing </item>.
                     const close = try self.scanner.next();
                     if (close != .element_close) return error.MalformedXml;
@@ -299,6 +308,7 @@ pub const MapAccess = struct {
         // Child element value.
         var deser = Deserializer{ .scanner = self.scanner.*, .borrow_strings = self.borrow_strings };
         const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
+        errdefer ownership.free(T, result, allocator, {}, ownership.borrowedInput(self));
         self.scanner.* = deser.scanner;
 
         // Consume the closing tag of this child element.
@@ -364,6 +374,7 @@ pub const SeqAccess = struct {
                     _ = try self.scanner.next();
                     var deser = Deserializer{ .scanner = self.scanner.*, .borrow_strings = self.borrow_strings };
                     const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
+                    errdefer ownership.free(T, result, allocator, {}, ownership.borrowedInput(self));
                     self.scanner.* = deser.scanner;
                     // Consume closing tag.
                     const close = try self.scanner.peek();
@@ -405,7 +416,7 @@ fn deserializeFromText(comptime T: type, text: []const u8, allocator: Allocator,
             @memcpy(copy, text);
             return copy;
         }
-        return Scanner.unescapeEntities(allocator, text) catch error.MalformedXml;
+        return Scanner.unescapeEntities(allocator, text) catch |err| if (err == error.OutOfMemory) error.OutOfMemory else error.MalformedXml;
     } else if (k == .@"enum") {
         inline for (reflect.enumFields(T)) |field| {
             if (std.mem.eql(u8, text, field.name))
@@ -421,6 +432,7 @@ fn errorFromAny(err: anyerror) DeserializeError {
     return switch (err) {
         error.UnknownField => error.UnknownField,
         error.MissingField => error.MissingField,
+        error.DuplicateField => error.DuplicateField,
         error.UnexpectedEof => error.UnexpectedEof,
         error.OutOfMemory => error.OutOfMemory,
         error.MalformedXml => error.MalformedXml,

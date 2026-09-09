@@ -26,6 +26,7 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 /// Serialize with explicit options.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     var ser = Serializer(.{}).init(&aw.writer, opts);
     try core_serialize.serialize(@TypeOf(value), value, &ser, .{});
     return aw.toOwnedSlice();
@@ -66,6 +67,7 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 /// Serialize with explicit options and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opts: Options, comptime schema: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     var ser = Serializer(.{}).init(&aw.writer, opts);
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, schema, .{});
     return aw.toOwnedSlice();
@@ -86,6 +88,7 @@ pub fn toWriterWithSchema(writer: *compat.Io.Writer, value: anytype, opts: Optio
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.init(input);
     const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
+    errdefer core_deserialize.ownership.free(T, result, allocator, schema, core_deserialize.ownership.borrowedInput(&deser));
     try checkTrailingData(&deser);
     return result;
 }
@@ -94,6 +97,7 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
 pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.initBorrowed(input);
     const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
+    errdefer core_deserialize.ownership.free(T, result, allocator, schema, core_deserialize.ownership.borrowedInput(&deser));
     try checkTrailingData(&deser);
     return result;
 }
@@ -122,6 +126,7 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 pub fn fromSliceWith(comptime T: type, allocator: std.mem.Allocator, input: []const u8, opts: DeserializeOptions) !T {
     var deser = Deserializer.initWith(input, opts);
     const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
+    errdefer core_deserialize.ownership.free(T, result, allocator, {}, core_deserialize.ownership.borrowedInput(&deser));
     try checkTrailingData(&deser);
     return result;
 }
@@ -133,6 +138,7 @@ pub fn fromSliceWith(comptime T: type, allocator: std.mem.Allocator, input: []co
 pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.initBorrowed(input);
     const result = try core_deserialize.deserialize(T, allocator, &deser, .{});
+    errdefer core_deserialize.ownership.free(T, result, allocator, {}, core_deserialize.ownership.borrowedInput(&deser));
     try checkTrailingData(&deser);
     return result;
 }
@@ -179,6 +185,7 @@ pub fn fromValue(comptime T: type, allocator: std.mem.Allocator, value: CoreValu
 /// Map is a tuple of `.{ .{ Type, Adapter }, ... }`.
 pub fn toSliceWithMap(allocator: std.mem.Allocator, value: anytype, comptime map: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     var ser = Serializer(map).init(&aw.writer, .{});
     try core_serialize.serializeSchema(@TypeOf(value), value, &ser, {}, map);
     return aw.toOwnedSlice();
@@ -194,6 +201,7 @@ pub fn toWriterWithMap(writer: *compat.Io.Writer, value: anytype, comptime map: 
 pub fn fromSliceWithMap(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime map: anytype) !T {
     var deser = Deserializer.init(input);
     const result = try core_deserialize.deserializeSchema(T, allocator, &deser, {}, map);
+    errdefer core_deserialize.ownership.free(T, result, allocator, {}, core_deserialize.ownership.borrowedInput(&deser));
     try checkTrailingData(&deser);
     return result;
 }
@@ -202,6 +210,7 @@ pub fn fromSliceWithMap(comptime T: type, allocator: std.mem.Allocator, input: [
 pub fn fromSliceBorrowedWithMap(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime map: anytype) !T {
     var deser = Deserializer.initBorrowed(input);
     const result = try core_deserialize.deserializeSchema(T, allocator, &deser, {}, map);
+    errdefer core_deserialize.ownership.free(T, result, allocator, {}, core_deserialize.ownership.borrowedInput(&deser));
     try checkTrailingData(&deser);
     return result;
 }
@@ -211,6 +220,16 @@ pub fn fromReaderWithMap(comptime T: type, allocator: std.mem.Allocator, reader:
     const buf = try readAll(allocator, reader);
     defer allocator.free(buf);
     return fromSliceWithMap(T, allocator, buf, map);
+}
+
+/// Parse into a result that owns a separate arena. Release it with `.deinit()`.
+pub fn fromSliceManaged(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !@import("../../core/parsed.zig").Parsed(T) {
+    return fromSliceManagedSchema(T, allocator, input, {});
+}
+
+/// Parse with an external schema into an owning result.
+pub fn fromSliceManagedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !@import("../../core/parsed.zig").Parsed(T) {
+    return @import("../../core/parsed.zig").parse(T, allocator, input, schema, @This());
 }
 
 // Tests.

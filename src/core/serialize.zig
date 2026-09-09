@@ -3,6 +3,7 @@ const kind_mod = @import("kind.zig");
 const interface = @import("interface.zig");
 const options = @import("options.zig");
 const compat = @import("compat");
+const field_meta = @import("fields.zig");
 const reflect = @import("../reflect.zig");
 
 const Kind = kind_mod.Kind;
@@ -140,78 +141,67 @@ fn serializeSliceSchema(comptime T: type, value: T, serializer: anytype, comptim
     return arr.end();
 }
 
-/// Number of fields `serializeStructSchema` will emit for `value`.
-///
-/// This must stay in lockstep with the emit loop below: the count is written
-/// into the container header before any field is serialized, so a mismatch
-/// silently produces a malformed document. Any new skip or flatten rule has to
-/// be mirrored in both places.
 fn countStructFieldsSchema(comptime T: type, value: T, comptime schema: anytype) usize {
     var count: usize = 0;
-    inline for (reflect.structFields(T)) |field| {
-        if (comptime options.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
-
-        if (comptime options.isFlattenedFieldSchema(T, field.name, schema)) {
-            if (@typeInfo(field.type) != .@"struct")
-                @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
-            count += reflect.structFields(field.type).len;
-            continue;
-        }
-
-        const field_value = @field(value, field.name);
-        const skip_null = comptime options.isSkipIfNullSchema(T, field.name, schema) and @typeInfo(field.type) == .optional;
-        const skip_empty = comptime options.isSkipIfEmptySchema(T, field.name, schema) and @typeInfo(field.type) == .pointer;
-        if (!((skip_null and field_value == null) or (skip_empty and field_value.len == 0))) {
-            count += 1;
-        }
+    inline for (comptime field_meta.leaves(T, schema, .serialize)) |F| {
+        if (comptime options.shouldSkipFieldSchema(F.Parent, F.field.name, .serialize, F.schema)) continue;
+        const v = F.get(value);
+        if (includeField(F, v)) count += 1;
     }
     return count;
 }
-
 fn serializeStructSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
-    _ = map;
     var ss = try beginStructN(serializer, countStructFieldsSchema(T, value, schema));
     defer cleanupContainer(&ss);
-
-    inline for (reflect.structFields(T)) |field| {
-        if (comptime options.shouldSkipFieldSchema(T, field.name, .serialize, schema)) continue;
-
-        if (comptime options.isFlattenedFieldSchema(T, field.name, schema)) {
-            if (@typeInfo(field.type) != .@"struct")
-                @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
-            const nested = @field(value, field.name);
-            inline for (reflect.structFields(field.type)) |sf| {
-                const nested_wire = comptime options.wireFieldNameForDir(field.type, sf.name, {}, .serialize);
-                if (comptime options.hasFieldWithSchema(field.type, sf.name, {})) {
-                    const WithMod = comptime options.getFieldWithSchema(field.type, sf.name, {});
-                    try ss.serializeField(nested_wire, WithMod.serialize(@field(nested, sf.name)));
-                } else {
-                    try ss.serializeField(nested_wire, @field(nested, sf.name));
-                }
-            }
-            continue;
-        }
-
-        const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
-        const field_value = @field(value, field.name);
-
-        const skip_null = comptime options.isSkipIfNullSchema(T, field.name, schema) and @typeInfo(field.type) == .optional;
-        const skip_empty = comptime options.isSkipIfEmptySchema(T, field.name, schema) and @typeInfo(field.type) == .pointer;
-
-        const should_skip = (skip_null and field_value == null) or
-            (skip_empty and field_value.len == 0);
-
-        if (!should_skip) {
-            if (comptime options.hasFieldWithSchema(T, field.name, schema)) {
-                const WithMod = comptime options.getFieldWithSchema(T, field.name, schema);
-                try ss.serializeField(wire_name, WithMod.serialize(field_value));
-            } else {
-                try ss.serializeField(wire_name, field_value);
-            }
+    try emitStruct(T, value, &ss, schema, map);
+    return ss.end();
+}
+fn emitStruct(comptime T: type, value: T, ss: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(ss.*).Error!void {
+    comptime field_meta.validate(T, schema, .serialize);
+    inline for (comptime field_meta.leaves(T, schema, .serialize)) |F| {
+        if (comptime options.shouldSkipFieldSchema(F.Parent, F.field.name, .serialize, F.schema)) continue;
+        const v = F.get(value);
+        if (includeField(F, v)) {
+            const name = comptime options.wireFieldNameForDir(F.Parent, F.field.name, F.schema, .serialize);
+            if (comptime options.hasFieldWithSchema(F.Parent, F.field.name, F.schema)) {
+                const With = comptime options.getFieldWithSchema(F.Parent, F.field.name, F.schema);
+                try emitField(ss, name, With.serialize(v), map);
+            } else try emitField(ss, name, v, map);
         }
     }
-
-    return ss.end();
+}
+fn includeField(comptime F: type, v: F.field.type) bool {
+    if (comptime options.isSkipIfNullSchema(F.Parent, F.field.name, F.schema) and @typeInfo(F.field.type) == .optional) {
+        if (v == null) return false;
+    }
+    if (comptime options.isSkipIfEmptySchema(F.Parent, F.field.name, F.schema) and @typeInfo(F.field.type) == .pointer) {
+        if (v.len == 0) return false;
+    }
+    return true;
+}
+fn emitField(ss: anytype, comptime name: []const u8, value: anytype, comptime map: anytype) @TypeOf(ss.*).Error!void {
+    if (@hasDecl(@TypeOf(ss.*), "serializeFieldWithMap")) return ss.serializeFieldWithMap(name, value, map);
+    return ss.serializeField(name, adapted(value, map));
+}
+/// Format layout must treat directly adapted types like custom hooks while
+/// preserving the shape of containers that merely contain adapted children.
+pub fn kindWithMap(comptime T: type, comptime map: anytype) Kind {
+    if (comptime @TypeOf(map) != void) {
+        if (comptime findOobAdapter(T, map) != null) return .custom;
+    }
+    return typeKind(T);
+}
+fn adapted(value: anytype, comptime map: anytype) if (@TypeOf(map) == void or reflect.structFields(@TypeOf(map)).len == 0) @TypeOf(value) else Adapted(@TypeOf(value), map) {
+    if (comptime @TypeOf(map) == void or reflect.structFields(@TypeOf(map)).len == 0) return value;
+    return .{ .value = value };
+}
+fn Adapted(comptime T: type, comptime map: anytype) type {
+    return struct {
+        value: T,
+        pub fn zerdeSerialize(self: @This(), s: anytype) @TypeOf(s.*).Error!void {
+            return serializeSchema(T, self.value, s, {}, map);
+        }
+    };
 }
 
 fn serializeTupleSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
@@ -229,16 +219,15 @@ fn serializeUnionSchema(comptime T: type, value: T, serializer: anytype, comptim
     if (tag_style == .external) {
         return serializeUnionExternalSchema(T, value, serializer, schema, map);
     } else if (tag_style == .internal) {
-        return serializeUnionInternalSchema(T, value, serializer, schema);
+        return serializeUnionInternalSchema(T, value, serializer, schema, map);
     } else if (tag_style == .adjacent) {
-        return serializeUnionAdjacentSchema(T, value, serializer, schema);
+        return serializeUnionAdjacentSchema(T, value, serializer, schema, map);
     } else {
         return serializeUnionUntaggedSchema(T, value, serializer, map);
     }
 }
 
 fn serializeUnionExternalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
-    _ = map;
     inline for (reflect.unionFields(T)) |field| {
         if (value == @field(T, field.name)) {
             const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
@@ -248,21 +237,53 @@ fn serializeUnionExternalSchema(comptime T: type, value: T, serializer: anytype,
                 const payload = @field(value, field.name);
                 var ss = try beginStructN(serializer, 1);
                 defer cleanupContainer(&ss);
-                try ss.serializeField(wire_name, payload);
+                try emitField(&ss, wire_name, payload, map);
                 return ss.end();
             }
         }
     }
 }
 
-fn serializeUnionInternalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
+fn TaggedPayloadSerializer(comptime S: type, comptime tag_key: []const u8, comptime tag_value: []const u8) type {
+    return struct {
+        parent: *S,
+        const Self = @This();
+        pub const Error = S.Error;
+        pub fn beginStruct(self: *Self) Error!ErrorPayload(@TypeOf(S.beginStruct)) {
+            var container = try self.parent.beginStruct();
+            errdefer cleanupContainer(&container);
+            try container.serializeField(tag_key, tag_value);
+            return container;
+        }
+        pub fn beginStructLen(self: *Self, len: usize) Error!StructContainer(S) {
+            var container = try beginStructN(self.parent, len + 1);
+            errdefer cleanupContainer(&container);
+            try container.serializeField(tag_key, tag_value);
+            return container;
+        }
+        pub fn beginArray(_: *Self) Error!ArrayContainer(S) {
+            @compileError("Internally tagged payload adapters must serialize an object");
+        }
+        pub fn beginArrayLen(_: *Self, _: usize) Error!ArrayContainer(S) {
+            @compileError("Internally tagged payload adapters must serialize an object");
+        }
+    };
+}
+
+fn serializeUnionInternalSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const tag_field_name = comptime options.getTagFieldSchema(T, schema);
     inline for (reflect.unionFields(T)) |field| {
         if (value == @field(T, field.name)) {
             const wire_name = comptime options.wireFieldNameForDir(T, field.name, schema, .serialize);
             if (comptime field.type != void and @typeInfo(field.type) != .@"struct")
                 @compileError("Internal tagging requires struct payloads, got " ++ @typeName(field.type));
-            const payload_fields = comptime if (field.type == void) 0 else reflect.structFields(field.type).len;
+            if (comptime field.type != void and (options.hasCustomSerializer(field.type) or
+                (@TypeOf(map) != void and findOobAdapter(field.type, map) != null)))
+            {
+                var tagged = TaggedPayloadSerializer(@TypeOf(serializer.*), tag_field_name, wire_name){ .parent = serializer };
+                return serializeSchema(field.type, @field(value, field.name), &tagged, {}, map);
+            }
+            const payload_fields = if (field.type == void) 0 else countStructFieldsSchema(field.type, @field(value, field.name), {});
             var ss = try beginStructN(serializer, 1 + payload_fields);
             defer cleanupContainer(&ss);
             try ss.serializeField(tag_field_name, @as([]const u8, wire_name));
@@ -270,16 +291,14 @@ fn serializeUnionInternalSchema(comptime T: type, value: T, serializer: anytype,
                 return ss.end();
             } else {
                 const payload = @field(value, field.name);
-                inline for (reflect.structFields(field.type)) |sf| {
-                    try ss.serializeField(sf.name, @field(payload, sf.name));
-                }
+                try emitStruct(field.type, payload, &ss, {}, map);
                 return ss.end();
             }
         }
     }
 }
 
-fn serializeUnionAdjacentSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype) @TypeOf(serializer.*).Error!void {
+fn serializeUnionAdjacentSchema(comptime T: type, value: T, serializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
     const tag_field_name = comptime options.getTagFieldSchema(T, schema);
     const content_field_name = comptime options.getContentFieldSchema(T, schema);
     inline for (reflect.unionFields(T)) |field| {
@@ -290,7 +309,7 @@ fn serializeUnionAdjacentSchema(comptime T: type, value: T, serializer: anytype,
             try ss.serializeField(tag_field_name, @as([]const u8, wire_name));
             if (field.type != void) {
                 const payload = @field(value, field.name);
-                try ss.serializeField(content_field_name, payload);
+                try emitField(&ss, content_field_name, payload, map);
             }
             return ss.end();
         }
@@ -325,7 +344,6 @@ fn serializeEnumSchema(comptime T: type, value: T, serializer: anytype, comptime
 }
 
 fn serializeMapSchema(comptime T: type, value: T, serializer: anytype, comptime map: anytype) @TypeOf(serializer.*).Error!void {
-    _ = map;
     // Map-like types are duck-typed on getOrPut + iterator, so `count` is not
     // guaranteed; fall back to the counting container when it is missing.
     var ss = if (comptime @hasDecl(T, "count"))
@@ -335,7 +353,9 @@ fn serializeMapSchema(comptime T: type, value: T, serializer: anytype, comptime 
     defer cleanupContainer(&ss);
     var it = value.iterator();
     while (it.next()) |entry| {
-        try ss.serializeEntry(entry.key_ptr.*, entry.value_ptr.*);
+        if (@hasDecl(@TypeOf(ss), "serializeEntryWithMap")) {
+            try ss.serializeEntryWithMap(entry.key_ptr.*, entry.value_ptr.*, map);
+        } else try ss.serializeEntry(entry.key_ptr.*, adapted(entry.value_ptr.*, map));
     }
     return ss.end();
 }

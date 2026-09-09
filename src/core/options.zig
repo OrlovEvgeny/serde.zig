@@ -161,21 +161,36 @@ pub fn shouldSkipField(comptime T: type, comptime field_name: []const u8, compti
     return shouldSkipFieldSchema(T, field_name, dir, {});
 }
 
-pub fn shouldSkipFieldSchema(comptime T: type, comptime field_name: []const u8, comptime _: Direction, comptime schema: anytype) bool {
-    const S = @TypeOf(schema);
-    if (S != void) {
-        if (@hasField(S, "skip")) {
-            const skip = schema.skip;
-            if (@hasField(@TypeOf(skip), field_name))
-                return @field(skip, field_name) == .always;
+pub fn shouldSkipFieldSchema(comptime T: type, comptime field_name: []const u8, comptime dir: Direction, comptime schema: anytype) bool {
+    const name = if (dir == .serialize) "skip_serializing" else "skip_deserializing";
+    // Any field-specific external skip setting overrides the corresponding
+    // in-type settings, including explicit false.
+    if (@TypeOf(schema) != void) {
+        if (@hasField(@TypeOf(schema), "skip")) {
+            if (@hasField(@TypeOf(schema.skip), field_name)) {
+                if (@field(schema.skip, field_name) == .always) return true;
+                if (@hasField(@TypeOf(schema), name)) {
+                    const directional = @field(schema, name);
+                    if (@hasField(@TypeOf(directional), field_name)) return @field(directional, field_name);
+                }
+                return false;
+            }
+        }
+        if (@hasField(@TypeOf(schema), name)) {
+            const directional = @field(schema, name);
+            if (@hasField(@TypeOf(directional), field_name)) return @field(directional, field_name);
         }
     }
     if (!hasSerdeOptions(T)) return false;
-    const opts = T.serde;
-    if (!hasFieldOrDecl(@TypeOf(opts), "skip")) return false;
-    const skip = opts.skip;
-    if (!@hasField(@TypeOf(skip), field_name)) return false;
-    return @field(skip, field_name) == .always;
+    const o = T.serde;
+    if (hasFieldOrDecl(@TypeOf(o), "skip")) {
+        if (@hasField(@TypeOf(o.skip), field_name) and @field(o.skip, field_name) == .always) return true;
+    }
+    if (hasFieldOrDecl(@TypeOf(o), name)) {
+        const directional = @field(o, name);
+        if (@hasField(@TypeOf(directional), field_name)) return @field(directional, field_name);
+    }
+    return false;
 }
 
 pub fn isSkipIfNull(comptime T: type, comptime field_name: []const u8) bool {

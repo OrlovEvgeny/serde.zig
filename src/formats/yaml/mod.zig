@@ -31,6 +31,7 @@ pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
 /// Serialize any value to a YAML byte slice with options. Caller owns the returned memory.
 pub fn toSliceWith(allocator: std.mem.Allocator, value: anytype, opts: Options) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterWithOptions(&aw.writer, value, opts);
     return aw.toOwnedSlice();
 }
@@ -84,6 +85,7 @@ pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime sche
 /// Serialize with options and an external schema.
 pub fn toSliceWithSchema(allocator: std.mem.Allocator, value: anytype, opt: Options, comptime schema: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterWithSchema(&aw.writer, value, opt, schema);
     return aw.toOwnedSlice();
 }
@@ -109,7 +111,9 @@ pub fn toWriterWithSchema(writer: *compat.Io.Writer, value: anytype, opt: Option
 
 /// Deserialize a value of type T from a YAML byte slice with an external schema.
 pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
-    const val = try parser_mod.parse(allocator, input);
+    var parse_arena = std.heap.ArenaAllocator.init(allocator);
+    defer parse_arena.deinit();
+    const val = try parser_mod.parse(parse_arena.allocator(), input);
     var deser = Deserializer.init(&val);
     return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
 }
@@ -128,28 +132,12 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
 }
 
 pub fn fromSliceWith(comptime T: type, allocator: std.mem.Allocator, input: []const u8, opts: DeserializeOptions) !T {
-    const val = try parser_mod.parseWith(allocator, input, opts);
-
-    const k = comptime kind_mod.typeKind(T);
-
-    if (k == .@"struct") {
-        if (val != .mapping) return error.WrongType;
-        var deser = Deserializer.init(&val);
-        return core_deserialize.deserialize(T, allocator, &deser, .{});
-    }
+    var parse_arena = std.heap.ArenaAllocator.init(allocator);
+    defer parse_arena.deinit();
+    const val = try parser_mod.parseWith(parse_arena.allocator(), input, opts);
 
     var deser = Deserializer.init(&val);
-    return switch (k) {
-        .bool => deser.deserializeBool(),
-        .int => deser.deserializeInt(T),
-        .float => deser.deserializeFloat(T),
-        .string => deser.deserializeString(allocator),
-        .optional => deser.deserializeOptional(kind_mod.Child(T), allocator),
-        .slice => deser.deserializeSeq(T, allocator),
-        .@"enum" => deser.deserializeEnum(T),
-        .@"union" => deser.deserializeUnion(T, allocator),
-        else => @compileError("YAML top-level type not supported: " ++ @typeName(T)),
-    };
+    return core_deserialize.deserialize(T, allocator, &deser, .{});
 }
 
 /// Deserialize a value of type T from a reader.
@@ -183,6 +171,16 @@ pub fn fromValue(comptime T: type, allocator: std.mem.Allocator, value: CoreValu
 }
 
 const testing = std.testing;
+
+/// Parse into a result that owns a separate arena. Release it with `.deinit()`.
+pub fn fromSliceManaged(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !@import("../../core/parsed.zig").Parsed(T) {
+    return fromSliceManagedSchema(T, allocator, input, {});
+}
+
+/// Parse with an external schema into an owning result.
+pub fn fromSliceManagedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !@import("../../core/parsed.zig").Parsed(T) {
+    return @import("../../core/parsed.zig").parse(T, allocator, input, schema, @This());
+}
 
 test "roundtrip flat struct" {
     const Point = struct { x: i32, y: i32 };

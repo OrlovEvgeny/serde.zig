@@ -30,6 +30,7 @@ pub fn fromJsonValue(allocator: std.mem.Allocator, src: std.json.Value) !Value {
         .string => |s| return .{ .string = try value_mod.dupe(allocator, s) },
         .array => |arr| {
             var out = try allocator.alloc(Value, arr.items.len);
+            @memset(out, .null);
             errdefer {
                 for (out[0..]) |item| item.deinit(allocator);
                 allocator.free(out);
@@ -39,6 +40,7 @@ pub fn fromJsonValue(allocator: std.mem.Allocator, src: std.json.Value) !Value {
         },
         .object => |obj| {
             var out = try allocator.alloc(Entry, obj.count());
+            @memset(out, .{ .key = &.{}, .value = .null, .quoted = false });
             errdefer {
                 for (out[0..]) |entry| {
                     allocator.free(entry.key);
@@ -49,9 +51,12 @@ pub fn fromJsonValue(allocator: std.mem.Allocator, src: std.json.Value) !Value {
             var it = obj.iterator();
             var i: usize = 0;
             while (it.next()) |entry| : (i += 1) {
+                const key = try value_mod.dupe(allocator, entry.key_ptr.*);
+                errdefer allocator.free(key);
+                const child = try fromJsonValue(allocator, entry.value_ptr.*);
                 out[i] = .{
-                    .key = try value_mod.dupe(allocator, entry.key_ptr.*),
-                    .value = try fromJsonValue(allocator, entry.value_ptr.*),
+                    .key = key,
+                    .value = child,
                     .quoted = false,
                 };
             }

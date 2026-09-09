@@ -56,6 +56,7 @@ pub fn build(b: *std.Build) void {
 
     // Additional test suites.
     const extra_test_sources = [_][]const u8{
+        "test/core_regressions_test.zig",
         "test/stress_test.zig",
         "test/edge_cases_test.zig",
         "test/adversarial_test.zig",

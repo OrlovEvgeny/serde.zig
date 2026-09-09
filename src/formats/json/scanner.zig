@@ -6,7 +6,7 @@ const std = @import("std");
 const string_char_table = blk: {
     var table: [256]u8 = undefined;
     for (&table, 0..) |*entry, byte| {
-        entry.* = if (byte < 0x20 or byte == '"' or byte == '\\') 1 else 0;
+        entry.* = if (byte < 0x20 or byte == '"' or byte == '\\' or byte >= 0x80) 1 else 0;
     }
     break :blk table;
 };
@@ -14,7 +14,7 @@ const string_char_table = blk: {
 const string_char_table_relaxed = blk: {
     var table: [256]u8 = undefined;
     for (&table, 0..) |*entry, byte| {
-        entry.* = if (byte == '"' or byte == '\\') 1 else 0;
+        entry.* = if (byte == '"' or byte == '\\' or byte >= 0x80) 1 else 0;
     }
     break :blk table;
 };
@@ -203,46 +203,83 @@ pub const Scanner = struct {
         else
             &string_char_table;
 
-        while (pos + 4 <= input.len) {
-            const a = input[pos];
-            const b = input[pos + 1];
-            const c = input[pos + 2];
-            const d = input[pos + 3];
-            if ((table[a] | table[b] | table[c] | table[d]) == 0) {
-                pos += 4;
-            } else break;
-        }
-
-        while (pos < input.len) {
-            const c = input[pos];
-            if (c == '"') {
-                const result = input[start..pos];
-                self.pos = pos + 1; // skip closing quote
-                self.last_string_has_escape = has_escape;
-                return result;
-            }
-            if (c == '\\') {
-                has_escape = true;
-                pos += 1; // skip backslash
-                if (pos >= input.len) return error.UnexpectedEof;
-                const esc = input[pos];
-                switch (esc) {
-                    '"', '\\', '/', 'b', 'f', 'n', 'r', 't' => {
-                        pos += 1;
-                    },
-                    'u' => {
-                        pos += 1;
-                        if (pos + 4 > input.len) return error.UnexpectedEof;
-                        pos += 4;
-                    },
-                    else => return error.InvalidEscape,
+        runs: while (pos < input.len) {
+            const run_start = pos;
+            var used_blocks = false;
+            if (input[pos] != '\\') {
+                while (pos + 4 <= input.len) {
+                    const a = input[pos];
+                    const b = input[pos + 1];
+                    const c = input[pos + 2];
+                    const d = input[pos + 3];
+                    if ((table[a] | table[b] | table[c] | table[d]) != 0) break;
+                    pos += 4;
+                    if (!used_blocks and pos - run_start >= 16) {
+                        pos = if (self.allow_unescaped_control_chars) skipPlainBlocks(input, pos, true) else skipPlainBlocks(input, pos, false);
+                        used_blocks = true;
+                    }
                 }
-            } else {
-                if (c < 0x20 and !self.allow_unescaped_control_chars) return error.InvalidControlCharacter;
-                pos += 1;
+            }
+            while (pos < input.len) {
+                const c = input[pos];
+                if (c == '"') {
+                    const result = input[start..pos];
+                    self.pos = pos + 1; // skip closing quote
+                    self.last_string_has_escape = has_escape;
+                    return result;
+                }
+                if (c == '\\') {
+                    has_escape = true;
+                    pos += 1; // skip backslash
+                    if (pos >= input.len) return error.UnexpectedEof;
+                    const esc = input[pos];
+                    switch (esc) {
+                        '"', '\\', '/', 'b', 'f', 'n', 'r', 't' => {
+                            pos += 1;
+                        },
+                        'u' => {
+                            pos += 1;
+                            if (pos + 4 > input.len) return error.UnexpectedEof;
+                            const cp = parseHex4(input[pos..][0..4]) orelse return error.InvalidUnicode;
+                            pos += 4;
+                            if (cp >= 0xD800 and cp <= 0xDBFF) {
+                                if (pos + 6 > input.len or input[pos] != '\\' or input[pos + 1] != 'u') return error.InvalidUnicode;
+                                const low = parseHex4(input[pos + 2 ..][0..4]) orelse return error.InvalidUnicode;
+                                if (low < 0xDC00 or low > 0xDFFF) return error.InvalidUnicode;
+                                pos += 6;
+                            } else if (cp >= 0xDC00 and cp <= 0xDFFF) return error.InvalidUnicode;
+                        },
+                        else => return error.InvalidEscape,
+                    }
+                } else {
+                    if (c < 0x20 and !self.allow_unescaped_control_chars) return error.InvalidControlCharacter;
+                    if (c >= 0x80) {
+                        const len = std.unicode.utf8ByteSequenceLength(c) catch return error.InvalidUnicode;
+                        if (pos + len > input.len) return error.InvalidUnicode;
+                        _ = std.unicode.utf8Decode(input[pos..][0..len]) catch return error.InvalidUnicode;
+                        pos += len;
+                    } else {
+                        if (has_escape and pos + 4 <= input.len and
+                            (table[c] | table[input[pos + 1]] | table[input[pos + 2]] | table[input[pos + 3]]) == 0) continue :runs;
+                        pos += 1;
+                    }
+                }
             }
         }
         return error.UnexpectedEof;
+    }
+
+    // Keep vector setup outside the short-name scanner's register/branch path.
+    noinline fn skipPlainBlocks(input: []const u8, start: usize, comptime relaxed: bool) usize {
+        var pos = start;
+        while (pos + 16 <= input.len) {
+            const bytes: @Vector(16, u8) = input[pos..][0..16].*;
+            var special = (bytes >= @as(@Vector(16, u8), @splat(0x80))) | (bytes == @as(@Vector(16, u8), @splat('"'))) | (bytes == @as(@Vector(16, u8), @splat('\\')));
+            if (!relaxed) special |= bytes < @as(@Vector(16, u8), @splat(0x20));
+            if (@reduce(.Or, special)) break;
+            pos += 16;
+        }
+        return pos;
     }
 
     fn scanNumber(self: *Scanner) ScanError![]const u8 {
@@ -418,4 +455,18 @@ test "unexpected eof" {
 test "unexpected token" {
     var s = Scanner{ .input = "xyz" };
     try testing.expectError(error.UnexpectedToken, s.next());
+}
+
+pub fn parseHex4(hex: *const [4]u8) ?u16 {
+    var result: u16 = 0;
+    for (hex) |c| {
+        const digit: u16 = switch (c) {
+            '0'...'9' => c - '0',
+            'a'...'f' => c - 'a' + 10,
+            'A'...'F' => c - 'A' + 10,
+            else => return null,
+        };
+        result = result * 16 + digit;
+    }
+    return result;
 }

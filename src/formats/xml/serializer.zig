@@ -76,8 +76,12 @@ pub const StructSerializer = struct {
     pub const Error = SerializeError;
 
     pub fn serializeField(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
+        return self.serializeFieldWithMap(key, value, .{});
+    }
+
+    pub fn serializeFieldWithMap(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime map: anytype) Error!void {
         const T = @TypeOf(value);
-        const k = comptime kind_mod.typeKind(T);
+        const k = comptime core_serialize.kindWithMap(T, map);
 
         // Void/null: self-closing element.
         if (k == .void) {
@@ -98,7 +102,7 @@ pub const StructSerializer = struct {
             // Unwrap and serialize the inner value.
             try self.parent.writeIndent();
             self.parent.out.writeAll("<" ++ key ++ ">") catch return error.WriteFailed;
-            try core_serialize.serialize(@typeInfo(T).optional.child, value.?, self.parent, .{});
+            try core_serialize.serialize(@typeInfo(T).optional.child, value.?, self.parent, map);
             self.parent.out.writeAll("</" ++ key ++ ">") catch return error.WriteFailed;
             return;
         }
@@ -108,7 +112,7 @@ pub const StructSerializer = struct {
             try self.parent.writeIndent();
             self.parent.out.writeAll("<" ++ key ++ ">") catch return error.WriteFailed;
             self.parent.depth += 1;
-            try core_serialize.serialize(T, value, self.parent, .{});
+            try core_serialize.serialize(T, value, self.parent, map);
             self.parent.depth -= 1;
             try self.parent.writeIndent();
             self.parent.out.writeAll("</" ++ key ++ ">") catch return error.WriteFailed;
@@ -125,20 +129,20 @@ pub const StructSerializer = struct {
                 .array => @typeInfo(T).array.child,
                 else => unreachable,
             };
-            const child_kind = comptime kind_mod.typeKind(Child);
+            const child_kind = comptime core_serialize.kindWithMap(Child, map);
             for (value) |elem| {
                 if (child_kind == .@"struct") {
                     try self.parent.writeIndent();
                     self.parent.out.writeAll("<item>") catch return error.WriteFailed;
                     self.parent.depth += 1;
-                    try core_serialize.serialize(Child, elem, self.parent, .{});
+                    try core_serialize.serialize(Child, elem, self.parent, map);
                     self.parent.depth -= 1;
                     try self.parent.writeIndent();
                     self.parent.out.writeAll("</item>") catch return error.WriteFailed;
                 } else {
                     try self.parent.writeIndent();
                     self.parent.out.writeAll("<item>") catch return error.WriteFailed;
-                    try core_serialize.serialize(Child, elem, self.parent, .{});
+                    try core_serialize.serialize(Child, elem, self.parent, map);
                     self.parent.out.writeAll("</item>") catch return error.WriteFailed;
                 }
             }
@@ -151,11 +155,15 @@ pub const StructSerializer = struct {
         // Scalar: <key>value</key>.
         try self.parent.writeIndent();
         self.parent.out.writeAll("<" ++ key ++ ">") catch return error.WriteFailed;
-        try core_serialize.serialize(T, value, self.parent, .{});
+        try core_serialize.serialize(T, value, self.parent, map);
         self.parent.out.writeAll("</" ++ key ++ ">") catch return error.WriteFailed;
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
+        return self.serializeEntryWithMap(key, value, .{});
+    }
+
+    pub fn serializeEntryWithMap(self: *StructSerializer, key: anytype, value: anytype, comptime map: anytype) Error!void {
         const T = @TypeOf(value);
         const K = @TypeOf(key);
         // Runtime key: write <key>value</key> where key is a runtime string.
@@ -165,7 +173,7 @@ pub const StructSerializer = struct {
         self.parent.out.writeByte('<') catch return error.WriteFailed;
         self.parent.out.writeAll(key_str) catch return error.WriteFailed;
         self.parent.out.writeByte('>') catch return error.WriteFailed;
-        try core_serialize.serialize(T, value, self.parent, .{});
+        try core_serialize.serialize(T, value, self.parent, map);
         self.parent.out.writeAll("</") catch return error.WriteFailed;
         self.parent.out.writeAll(key_str) catch return error.WriteFailed;
         self.parent.out.writeByte('>') catch return error.WriteFailed;

@@ -111,20 +111,24 @@ pub const StructSerializer = struct {
     pub const Error = SerializeError;
 
     pub fn serializeField(self: *StructSerializer, comptime key: []const u8, value: anytype) Error!void {
+        return self.serializeFieldWithMap(key, value, .{});
+    }
+
+    pub fn serializeFieldWithMap(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime map: anytype) Error!void {
         const T = @TypeOf(value);
-        const k = comptime kind_mod.typeKind(T);
+        const k = comptime core_serialize.kindWithMap(T, map);
 
         if (k == .optional) {
             if (value == null) {
-                return self.serializeFieldInner(key, @as(void, {}), .void);
+                return self.serializeFieldInner(key, @as(void, {}), .void, map);
             }
-            return self.serializeFieldInner(key, value.?, comptime kind_mod.typeKind(kind_mod.Child(T)));
+            return self.serializeFieldInner(key, value.?, comptime core_serialize.kindWithMap(kind_mod.Child(T), map), map);
         }
 
-        return self.serializeFieldInner(key, value, k);
+        return self.serializeFieldInner(key, value, k, map);
     }
 
-    fn serializeFieldInner(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime k: kind_mod.Kind) Error!void {
+    fn serializeFieldInner(self: *StructSerializer, comptime key: []const u8, value: anytype, comptime k: kind_mod.Kind, comptime map: anytype) Error!void {
         if (self.first and self.is_map_value) {
             // First field after a "key:\n" — parent already wrote the newline,
             // just write indentation.
@@ -152,7 +156,7 @@ pub const StructSerializer = struct {
                 .is_map_value = true,
                 .opts = self.opts,
             };
-            core_serialize.serialize(@TypeOf(value), value, &child, .{}) catch return error.WriteFailed;
+            core_serialize.serialize(@TypeOf(value), value, &child, map) catch return error.WriteFailed;
             return;
         }
 
@@ -165,7 +169,7 @@ pub const StructSerializer = struct {
                 .is_map_value = false,
                 .opts = self.opts,
             };
-            core_serialize.serialize(@TypeOf(value), value, &child, .{}) catch return error.WriteFailed;
+            core_serialize.serialize(@TypeOf(value), value, &child, map) catch return error.WriteFailed;
             return;
         }
 
@@ -177,12 +181,16 @@ pub const StructSerializer = struct {
             .is_map_value = false,
             .opts = self.opts,
         };
-        core_serialize.serialize(@TypeOf(value), value, &child, .{}) catch return error.WriteFailed;
+        core_serialize.serialize(@TypeOf(value), value, &child, map) catch return error.WriteFailed;
     }
 
     pub fn serializeEntry(self: *StructSerializer, key: anytype, value: anytype) Error!void {
+        return self.serializeEntryWithMap(key, value, .{});
+    }
+
+    pub fn serializeEntryWithMap(self: *StructSerializer, key: anytype, value: anytype, comptime map: anytype) Error!void {
         const V = @TypeOf(value);
-        const k = comptime kind_mod.typeKind(V);
+        const k = comptime core_serialize.kindWithMap(V, map);
 
         if (self.first and self.is_map_value) {
             self.first = false;
@@ -214,7 +222,7 @@ pub const StructSerializer = struct {
                 .is_map_value = true,
                 .opts = self.opts,
             };
-            core_serialize.serialize(V, value, &child, .{}) catch return error.WriteFailed;
+            core_serialize.serialize(V, value, &child, map) catch return error.WriteFailed;
             return;
         }
 
@@ -227,7 +235,7 @@ pub const StructSerializer = struct {
                 .is_map_value = false,
                 .opts = self.opts,
             };
-            core_serialize.serialize(V, value, &child, .{}) catch return error.WriteFailed;
+            core_serialize.serialize(V, value, &child, map) catch return error.WriteFailed;
             return;
         }
 
@@ -238,7 +246,7 @@ pub const StructSerializer = struct {
             .is_map_value = false,
             .opts = self.opts,
         };
-        core_serialize.serialize(V, value, &child, .{}) catch return error.WriteFailed;
+        core_serialize.serialize(V, value, &child, map) catch return error.WriteFailed;
     }
 
     pub fn end(self: *StructSerializer) Error!void {

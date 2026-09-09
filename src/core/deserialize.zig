@@ -2,6 +2,8 @@ const std = @import("std");
 const compat = @import("compat");
 const reflect = @import("../reflect.zig");
 const kind_mod = @import("kind.zig");
+const field_meta = @import("fields.zig");
+pub const ownership = @import("ownership.zig");
 const opts = @import("options.zig");
 
 const Kind = kind_mod.Kind;
@@ -54,12 +56,12 @@ pub fn deserializeSchema(
         .float => deserializer.deserializeFloat(T),
         .string => deserializer.deserializeString(allocator),
         .void => deserializer.deserializeVoid(),
-        .optional => deserializer.deserializeOptional(Child(T), allocator),
+        .optional => deserializeOptional(Child(T), allocator, deserializer, map),
         .@"struct" => deserializeStructFieldsSchema(T, allocator, deserializer, schema, map),
         .@"enum" => deserializeEnumSchema(T, allocator, deserializer, schema),
         .@"union" => deserializeUnionDispatchSchema(T, allocator, deserializer, schema, map),
-        .array => deserializeArray(T, allocator, deserializer),
-        .slice => deserializer.deserializeSeq(T, allocator),
+        .array => deserializeArray(T, allocator, deserializer, map),
+        .slice => deserializeSlice(T, allocator, deserializer, map),
         .pointer => deserializePointerSchema(T, allocator, deserializer, map),
         .tuple => deserializeTupleSchema(T, allocator, deserializer, map),
         .bytes => {
@@ -94,7 +96,7 @@ fn deserializeEnumSchema(comptime T: type, allocator: Allocator, deserializer: a
     }
     // With rename/alias: read string and match in core.
     const name = try deserializer.deserializeString(allocator);
-    defer freeAllocated([]const u8, name, allocator);
+    defer ownership.free([]const u8, name, allocator, {}, ownership.borrowedInput(deserializer));
     inline for (reflect.enumFields(T)) |field| {
         if (opts.matchesDeserializeName(T, field.name, name, schema)) {
             return @enumFromInt(field.value);
@@ -107,20 +109,23 @@ fn deserializeArray(
     comptime T: type,
     allocator: Allocator,
     deserializer: anytype,
+    comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     const info = @typeInfo(T).array;
     const child = info.child;
     var result: T = undefined;
     var initialized: usize = 0;
-    errdefer for (result[0..initialized]) |elem| freeAllocated(child, elem, allocator);
+    errdefer for (result[0..initialized]) |elem| ownership.free(child, elem, allocator, {}, ownership.borrowedInput(deserializer));
     var seq = try deserializer.deserializeSeqAccess();
     for (0..info.len) |i| {
-        result[i] = try seq.nextElement(child, allocator) orelse return deserializer.raiseError(error.UnexpectedEof);
+        result[i] = try nextElement(child, allocator, &seq, map) orelse return deserializer.raiseError(error.UnexpectedEof);
         initialized += 1;
     }
     // Consume the closing delimiter.
-    if (try seq.nextElement(child, allocator) != null)
+    if (try nextElement(child, allocator, &seq, map)) |extra| {
+        ownership.free(child, extra, allocator, {}, ownership.borrowedInput(deserializer));
         return deserializer.raiseError(error.UnexpectedToken);
+    }
     return result;
 }
 
@@ -132,7 +137,7 @@ fn deserializePointerSchema(
 ) @TypeOf(deserializer.*).Error!T {
     const child = Child(T);
     const val = try deserializeSchema(child, allocator, deserializer, {}, map);
-    errdefer freeAllocated(child, val, allocator);
+    errdefer ownership.free(child, val, allocator, {}, ownership.borrowedInput(deserializer));
     const ptr = try allocator.create(child);
     ptr.* = val;
     return ptr;
@@ -144,218 +149,174 @@ fn deserializeTupleSchema(
     deserializer: anytype,
     comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
-    _ = map;
     const fields = reflect.structFields(T);
     var result: T = undefined;
     var fields_seen = compat.staticBitSetEmpty(fields.len);
     errdefer {
         inline for (fields, 0..) |field, i| {
-            if (fields_seen.isSet(i)) freeAllocated(field.type, @field(result, field.name), allocator);
+            if (fields_seen.isSet(i)) ownership.free(field.type, @field(result, field.name), allocator, {}, ownership.borrowedInput(deserializer));
         }
     }
     var seq = try deserializer.deserializeSeqAccess();
     inline for (fields, 0..) |field, i| {
-        @field(result, field.name) = try seq.nextElement(field.type, allocator) orelse
+        @field(result, field.name) = try nextElement(field.type, allocator, &seq, map) orelse
             return deserializer.raiseError(error.UnexpectedEof);
         fields_seen.set(i);
     }
-    if (fields.len > 0) {
-        if (try seq.nextElement(fields[0].type, allocator) != null)
-            return deserializer.raiseError(error.UnexpectedToken);
+    const Extra = if (fields.len > 0) fields[0].type else void;
+    if (try nextElement(Extra, allocator, &seq, map)) |extra| {
+        ownership.free(Extra, extra, allocator, {}, ownership.borrowedInput(deserializer));
+        return deserializer.raiseError(error.UnexpectedToken);
     }
     return result;
 }
 
-/// Recursively free heap memory owned by a deserialized value.
-/// No-op for borrowed deserialization with ArenaAllocator.
+/// Free an owned result. For external defaults use freeAllocatedSchema.
 pub fn freeAllocated(comptime T: type, value: T, allocator: Allocator) void {
-    switch (comptime kind_mod.typeKind(T)) {
-        .string, .bytes => allocator.free(value),
-        .slice => {
-            for (value) |elem| freeAllocated(@typeInfo(T).pointer.child, elem, allocator);
-            allocator.free(value);
-        },
-        .array => for (value) |elem| freeAllocated(@typeInfo(T).array.child, elem, allocator),
-        .pointer => {
-            freeAllocated(@typeInfo(T).pointer.child, value.*, allocator);
-            allocator.destroy(value);
-        },
-        .@"struct" => {
-            inline for (reflect.structFields(T)) |field| {
-                freeAllocated(field.type, @field(value, field.name), allocator);
-            }
-        },
-        .tuple => {
-            inline for (reflect.structFields(T)) |field| {
-                freeAllocated(field.type, @field(value, field.name), allocator);
-            }
-        },
-        .@"union" => {
-            inline for (reflect.unionFields(T)) |field| {
-                if (value == @field(T, field.name) and field.type != void)
-                    freeAllocated(field.type, @field(value, field.name), allocator);
-            }
-        },
-        .optional => if (value) |v| freeAllocated(@typeInfo(T).optional.child, v, allocator),
-        .map => {
-            var mut = value;
-            const K = kind_mod.MapKeyType(T);
-            const V = kind_mod.MapValueType(T);
-            var it = mut.iterator();
-            while (it.next()) |entry| {
-                freeAllocated(V, entry.value_ptr.*, allocator);
-                if (K == []const u8) freeAllocated(K, entry.key_ptr.*, allocator);
-            }
-            if (comptime kind_mod.isMapManaged(T)) {
-                mut.deinit();
-            } else {
-                mut.deinit(allocator);
-            }
-        },
-        else => {},
-    }
+    ownership.free(T, value, allocator, {}, null);
+}
+pub fn freeAllocatedSchema(comptime T: type, value: T, allocator: Allocator, comptime schema: anytype) void {
+    ownership.free(T, value, allocator, schema, null);
 }
 
-fn freeStructFields(comptime T: type, result: *T, fields_seen: anytype, allocator: Allocator) void {
-    inline for (reflect.structFields(T), 0..) |field, i| {
-        if (fields_seen.isSet(i)) {
-            freeAllocated(field.type, @field(result, field.name), allocator);
-        }
-    }
-}
-
-fn deserializeStructFieldsSchema(
-    comptime T: type,
-    allocator: Allocator,
-    deserializer: anytype,
-    comptime schema: anytype,
-    comptime oob_map: anytype,
-) @TypeOf(deserializer.*).Error!T {
-    _ = oob_map;
-    const fields = reflect.structFields(T);
-
-    var result: T = undefined;
-    var fields_seen = compat.staticBitSetEmpty(fields.len);
-    errdefer freeStructFields(T, &result, fields_seen, allocator);
-
-    inline for (fields, 0..) |field, i| {
-        if (comptime opts.shouldSkipFieldSchema(T, field.name, .deserialize, schema)) {
-            if (comptime field.defaultValue()) |dv| {
-                @field(result, field.name) = dv;
-                fields_seen.set(i);
-            } else if (@typeInfo(field.type) == .optional) {
-                @field(result, field.name) = null;
-                fields_seen.set(i);
-            }
-            continue;
-        }
-
-        if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) {
-            if (@typeInfo(field.type) != .@"struct")
-                @compileError("Flatten requires a struct type, got " ++ @typeName(field.type));
-            @field(result, field.name) = initWithDefaults(field.type);
-            continue;
-        }
-
-        if (comptime field.defaultValue()) |dv| {
-            @field(result, field.name) = dv;
-            fields_seen.set(i);
-        }
-        if (comptime opts.hasSerdeDefaultSchema(T, field.name, schema)) {
-            @field(result, field.name) = comptime opts.getSerdeDefaultSchema(T, field.name, schema);
-            fields_seen.set(i);
-        }
-    }
-
+fn deserializeStructFieldsSchema(comptime T: type, allocator: Allocator, deserializer: anytype, comptime schema: anytype, comptime oob_map: anytype) @TypeOf(deserializer.*).Error!T {
     var map = try deserializer.deserializeStruct(T);
+    return structFromMap(T, allocator, if (@typeInfo(@TypeOf(map)) == .pointer) map else &map, schema, oob_map, null);
+}
 
+fn structFromMap(comptime T: type, allocator: Allocator, map: anytype, comptime schema: anytype, comptime oob_map: anytype, comptime ignored: ?[]const u8) @TypeOf(map.*).Error!T {
+    comptime field_meta.validate(T, schema, .deserialize);
+    const fields = comptime field_meta.leaves(T, schema, .deserialize);
+    var result: T = undefined;
+    var seen = compat.staticBitSetEmpty(fields.len);
+    errdefer inline for (fields, 0..) |F, i| {
+        if (seen.isSet(i)) ownership.free(F.field.type, F.ptr(&result).*, allocator, {}, ownership.borrowedInput(map));
+    };
     while (try map.nextKey(allocator)) |key| {
+        defer freeKey(map, key, allocator);
+        if (ignored) |name| {
+            if (std.mem.eql(u8, key, name)) {
+                try map.skipValue();
+                continue;
+            }
+        }
         var matched = false;
-
-        inline for (fields, 0..) |field, i| {
-            if (comptime opts.shouldSkipFieldSchema(T, field.name, .deserialize, schema)) continue;
-            if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) continue;
-
-            if (opts.matchesDeserializeName(T, field.name, key, schema)) {
-                if (comptime opts.hasFieldWithSchema(T, field.name, schema)) {
-                    const WithMod = comptime opts.getFieldWithSchema(T, field.name, schema);
-                    const raw = try map.nextValue(WithMod.WireType, allocator);
-                    if (@hasDecl(WithMod, "deserializeAlloc")) {
-                        @field(result, field.name) = WithMod.deserializeAlloc(raw, allocator) catch |err| switch (err) {
-                            error.OutOfMemory => return map.raiseError(error.OutOfMemory),
-                            else => return map.raiseError(error.WithFailed),
-                        };
-                    } else {
-                        @field(result, field.name) = WithMod.deserialize(raw);
-                    }
-                } else {
-                    @field(result, field.name) = try map.nextValue(field.type, allocator);
-                }
-                fields_seen.set(i);
-                matched = true;
-            }
-        }
-
-        if (!matched) {
-            inline for (fields) |field| {
-                if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) {
-                    inline for (reflect.structFields(field.type)) |sf| {
-                        if (opts.matchesDeserializeName(field.type, sf.name, key, {})) {
-                            if (comptime opts.hasFieldWithSchema(field.type, sf.name, {})) {
-                                const WithMod = comptime opts.getFieldWithSchema(field.type, sf.name, {});
-                                const raw = try map.nextValue(WithMod.WireType, allocator);
-                                if (@hasDecl(WithMod, "deserializeAlloc")) {
-                                    @field(@field(result, field.name), sf.name) = WithMod.deserializeAlloc(raw, allocator) catch |err| switch (err) {
-                                        error.OutOfMemory => return map.raiseError(error.OutOfMemory),
-                                        else => return map.raiseError(error.WithFailed),
-                                    };
-                                } else {
-                                    @field(@field(result, field.name), sf.name) = WithMod.deserialize(raw);
-                                }
-                            } else {
-                                @field(@field(result, field.name), sf.name) = try map.nextValue(sf.type, allocator);
-                            }
-
-                            matched = true;
-                        }
-                    }
+        if (comptime fields.len <= 32) {
+            inline for (fields, 0..) |F, i| {
+                if (comptime opts.shouldSkipFieldSchema(F.Parent, F.field.name, .deserialize, F.schema)) continue;
+                if (!matched and opts.matchesDeserializeName(F.Parent, F.field.name, key, F.schema)) {
+                    if (seen.isSet(i)) return map.raiseError(error.DuplicateField);
+                    if (comptime opts.hasFieldWithSchema(F.Parent, F.field.name, F.schema)) {
+                        const With = comptime opts.getFieldWithSchema(F.Parent, F.field.name, F.schema);
+                        const raw = try nextValue(With.WireType, allocator, map, oob_map);
+                        // Allocating helpers create a distinct result; nonallocating helpers may borrow raw.
+                        if (@hasDecl(With, "deserializeAlloc")) {
+                            defer ownership.free(With.WireType, raw, allocator, {}, ownership.borrowedInput(map));
+                            F.ptr(&result).* = With.deserializeAlloc(raw, allocator) catch |err| return map.raiseError(if (err == error.OutOfMemory) error.OutOfMemory else error.WithFailed);
+                        } else F.ptr(&result).* = With.deserialize(raw);
+                    } else F.ptr(&result).* = try nextValue(F.field.type, allocator, map, oob_map);
+                    seen.set(i);
+                    matched = true;
                 }
             }
-        }
-
-        if (!matched) {
-            if (comptime opts.denyUnknownFieldsSchema(T, schema)) {
-                return map.raiseError(error.UnknownField);
+        } else if (field_meta.lookup(T, schema, key)) |i| {
+            switch (i) {
+                inline 0...fields.len - 1 => |index| try readStructField(fields[index], index, &result, &seen, allocator, map, oob_map),
+                else => unreachable,
             }
+            matched = true;
+        }
+        if (!matched) {
+            if (comptime opts.denyUnknownFieldsSchema(T, schema)) return map.raiseError(error.UnknownField);
             try map.skipValue();
         }
     }
-
-    // Validate required fields. Flattened fields already initialized above.
-    inline for (fields, 0..) |field, i| {
-        if (comptime opts.isFlattenedFieldSchema(T, field.name, schema)) continue;
-        if (!fields_seen.isSet(i)) {
-            if (@typeInfo(field.type) == .optional) {
-                @field(result, field.name) = null;
-            } else {
-                return map.raiseError(error.MissingField);
-            }
+    // Defaults are assigned only after input parsing. They are not owned or received fields.
+    inline for (fields, 0..) |F, i| {
+        if (!seen.isSet(i)) {
+            if (comptime F.defaultValue()) |dv| {
+                F.ptr(&result).* = dv;
+            } else if (@typeInfo(F.field.type) == .optional) {
+                F.ptr(&result).* = null;
+            } else return map.raiseError(error.MissingField);
         }
     }
-
     return result;
 }
 
-fn initWithDefaults(comptime T: type) T {
-    var result: T = undefined;
-    inline for (reflect.structFields(T)) |field| {
-        if (comptime field.defaultValue()) |dv| {
-            @field(result, field.name) = dv;
-        } else if (@typeInfo(field.type) == .optional) {
-            @field(result, field.name) = null;
+inline fn readStructField(comptime F: type, comptime i: usize, result: anytype, seen: anytype, allocator: Allocator, map: anytype, comptime oob_map: anytype) @TypeOf(map.*).Error!void {
+    if (seen.isSet(i)) return map.raiseError(error.DuplicateField);
+    if (comptime opts.hasFieldWithSchema(F.Parent, F.field.name, F.schema)) {
+        const With = comptime opts.getFieldWithSchema(F.Parent, F.field.name, F.schema);
+        const raw = try nextValue(With.WireType, allocator, map, oob_map);
+        // Allocating helpers create a distinct result; nonallocating helpers may borrow raw.
+        if (@hasDecl(With, "deserializeAlloc")) {
+            defer ownership.free(With.WireType, raw, allocator, {}, ownership.borrowedInput(map));
+            F.ptr(result).* = With.deserializeAlloc(raw, allocator) catch |err| return map.raiseError(if (err == error.OutOfMemory) error.OutOfMemory else error.WithFailed);
+        } else F.ptr(result).* = With.deserialize(raw);
+    } else F.ptr(result).* = try nextValue(F.field.type, allocator, map, oob_map);
+    seen.set(i);
+}
+
+pub fn freeKey(map: anytype, key: []const u8, allocator: Allocator) void {
+    const M = switch (@typeInfo(@TypeOf(map))) {
+        .pointer => |p| p.child,
+        else => @TypeOf(map),
+    };
+    if (@hasDecl(M, "freeKey")) map.freeKey(key, allocator);
+}
+
+// Preserve adapters when crossing a format's generic access API.
+fn Adapted(comptime T: type, comptime map: anytype) type {
+    return struct {
+        value: T,
+        pub fn zerdeDeserialize(comptime _: type, allocator: Allocator, d: anytype) @TypeOf(d.*).Error!@This() {
+            return .{ .value = try deserializeSchema(T, allocator, d, {}, map) };
         }
+    };
+}
+fn hasMap(comptime map: anytype) bool {
+    return @TypeOf(map) != void and reflect.structFields(@TypeOf(map)).len != 0;
+}
+fn nextValue(comptime T: type, allocator: Allocator, access: anytype, comptime map: anytype) @TypeOf(access.*).Error!T {
+    if (comptime hasMap(map)) return (try access.nextValue(Adapted(T, map), allocator)).value;
+    return access.nextValue(T, allocator);
+}
+fn nextElement(comptime T: type, allocator: Allocator, access: anytype, comptime map: anytype) @TypeOf(access.*).Error!?T {
+    if (comptime hasMap(map)) {
+        if (try access.nextElement(Adapted(T, map), allocator)) |v| return v.value;
+        return null;
     }
-    return result;
+    return access.nextElement(T, allocator);
+}
+fn deserializeOptional(comptime T: type, allocator: Allocator, d: anytype, comptime map: anytype) @TypeOf(d.*).Error!?T {
+    if (comptime hasMap(map)) {
+        if (try d.deserializeOptional(Adapted(T, map), allocator)) |v| return v.value;
+        return null;
+    }
+    return d.deserializeOptional(T, allocator);
+}
+fn deserializeSlice(comptime T: type, allocator: Allocator, d: anytype, comptime map: anytype) @TypeOf(d.*).Error!T {
+    const C = Child(T);
+    var seq = try d.deserializeSeqAccess();
+    var items: std.ArrayList(C) = .empty;
+    errdefer {
+        for (items.items) |v| ownership.free(C, v, allocator, {}, ownership.borrowedInput(d));
+        items.deinit(allocator);
+    }
+    if (@hasField(@TypeOf(seq), "remaining")) {
+        // Length prefixes are hints until the input is validated. Bound the
+        // eager allocation so truncated hostile input cannot reserve gigabytes.
+        const max_hint = @max(1, 64 * 1024 / @max(1, @sizeOf(C)));
+        try items.ensureTotalCapacityPrecise(allocator, @min(seq.remaining, max_hint));
+    } else if (@hasField(@TypeOf(seq), "items")) {
+        try items.ensureTotalCapacityPrecise(allocator, seq.items.len);
+    }
+    while (try nextElement(C, allocator, &seq, map)) |v| {
+        errdefer ownership.free(C, v, allocator, {}, ownership.borrowedInput(d));
+        try items.append(allocator, v);
+    }
+    return items.toOwnedSlice(allocator);
 }
 
 fn deserializeUnionDispatchSchema(
@@ -367,187 +328,158 @@ fn deserializeUnionDispatchSchema(
 ) @TypeOf(deserializer.*).Error!T {
     const tag_style = comptime opts.getUnionTagSchema(T, schema);
     return switch (tag_style) {
-        .external => if (comptime opts.hasNameOverrides(T, schema))
-            deserializeUnionExternalSchema(T, allocator, deserializer, schema)
+        .external => if (comptime opts.hasNameOverrides(T, schema) or hasMap(map))
+            deserializeUnionExternalSchema(T, allocator, deserializer, schema, map)
         else
             deserializer.deserializeUnion(T, allocator),
-        .internal => deserializeUnionInternalSchema(T, allocator, deserializer, schema),
-        .adjacent => deserializeUnionAdjacentSchema(T, allocator, deserializer, schema),
+        .internal => deserializeUnionInternalSchema(T, allocator, deserializer, schema, map),
+        .adjacent => deserializeUnionAdjacentSchema(T, allocator, deserializer, schema, map),
         .untagged => deserializeUnionUntaggedSchema(T, allocator, deserializer, map),
     };
 }
 
 /// External union deser with rename/alias. Tries bare string first (void
 /// variants), then {"variant": payload} form. Uses save/restore like untagged.
-fn deserializeUnionExternalSchema(
-    comptime T: type,
-    allocator: Allocator,
-    deserializer: anytype,
-    comptime schema: anytype,
-) @TypeOf(deserializer.*).Error!T {
-    const fields = reflect.unionFields(T);
-
-    {
-        const saved = deserializer.*;
-        if (deserializer.deserializeString(allocator)) |name| {
-            defer freeAllocated([]const u8, name, allocator);
-            inline for (fields) |field| {
-                if (field.type == void and opts.matchesDeserializeName(T, field.name, name, schema)) {
-                    return @unionInit(T, field.name, {});
-                }
+fn deserializeUnionExternalSchema(comptime T: type, allocator: Allocator, d: anytype, comptime schema: anytype, comptime oob_map: anytype) @TypeOf(d.*).Error!T {
+    const saved = d.*;
+    if (d.deserializeString(allocator)) |name| {
+        defer ownership.free([]const u8, name, allocator, {}, ownership.borrowedInput(d));
+        inline for (reflect.unionFields(T)) |f| {
+            if (f.type == void and opts.matchesDeserializeName(T, f.name, name, schema)) return @unionInit(T, f.name, {});
+        }
+        d.* = saved;
+    } else |err| {
+        if (err == error.OutOfMemory) return d.raiseError(error.OutOfMemory);
+        d.* = saved;
+    }
+    var access = try d.deserializeStruct(T);
+    const key = (try access.nextKey(allocator)) orelse return d.raiseError(error.MissingField);
+    defer freeKey(&access, key, allocator);
+    inline for (reflect.unionFields(T)) |f| {
+        if (opts.matchesDeserializeName(T, f.name, key, schema)) {
+            const payload = if (f.type == void) blk: {
+                try access.skipValue();
+                break :blk {};
+            } else try nextValue(f.type, allocator, &access, oob_map);
+            errdefer ownership.free(f.type, payload, allocator, {}, ownership.borrowedInput(d));
+            if (try access.nextKey(allocator)) |extra| {
+                freeKey(&access, extra, allocator);
+                return d.raiseError(error.UnexpectedToken);
             }
-            deserializer.* = saved;
-        } else |_| {
-            deserializer.* = saved;
+            return @unionInit(T, f.name, payload);
         }
     }
-
-    var map = try deserializer.deserializeStruct(T);
-    const key = (try map.nextKey(allocator)) orelse return deserializer.raiseError(error.MissingField);
-
-    inline for (fields) |field| {
-        if (opts.matchesDeserializeName(T, field.name, key, schema)) {
-            if (field.type == void) {
-                try map.skipValue();
-            } else {
-                const payload = try map.nextValue(field.type, allocator);
-                while (try map.nextKey(allocator)) |_| try map.skipValue();
-                return @unionInit(T, field.name, payload);
-            }
-            // Consume remaining keys (closing brace).
-            while (try map.nextKey(allocator)) |_| try map.skipValue();
-            return @unionInit(T, field.name, {});
-        }
-    }
-
-    return deserializer.raiseError(error.UnexpectedToken);
+    return d.raiseError(error.UnexpectedToken);
 }
 
-fn deserializeUnionInternalSchema(
-    comptime T: type,
-    allocator: Allocator,
-    deserializer: anytype,
-    comptime schema: anytype,
-) @TypeOf(deserializer.*).Error!T {
-    const fields = reflect.unionFields(T);
-    const tag_field = comptime opts.getTagFieldSchema(T, schema);
-
-    var map = try deserializer.deserializeStruct(T);
-
-    var tag_name: ?[]const u8 = null;
-    while (try map.nextKey(allocator)) |key| {
-        if (std.mem.eql(u8, key, tag_field)) {
-            tag_name = try map.nextValue([]const u8, allocator);
-            break;
-        }
-        try map.skipValue();
+// Scan once for the discriminator, then replay the input or tree through the
+// same field machinery. No intermediate DOM is required.
+fn unionTag(comptime T: type, allocator: Allocator, d: anytype, comptime schema: anytype) @TypeOf(d.*).Error![]const u8 {
+    var access = try d.deserializeStruct(T);
+    var name: ?[]const u8 = null;
+    errdefer if (name) |n| ownership.free([]const u8, n, allocator, {}, ownership.borrowedInput(d));
+    while (try access.nextKey(allocator)) |key| {
+        defer freeKey(&access, key, allocator);
+        if (std.mem.eql(u8, key, comptime opts.getTagFieldSchema(T, schema))) {
+            if (name != null) return d.raiseError(error.DuplicateField);
+            name = try access.nextValue([]const u8, allocator);
+        } else try access.skipValue();
     }
-
-    const name = tag_name orelse return deserializer.raiseError(error.MissingField);
-
-    inline for (fields) |field| {
-        if (opts.matchesDeserializeName(T, field.name, name, schema)) {
-            if (field.type == void) {
-                while (try map.nextKey(allocator)) |_| {
-                    try map.skipValue();
-                }
-                return @unionInit(T, field.name, {});
-            }
-
-            if (@typeInfo(field.type) != .@"struct")
-                @compileError("Internal tagging requires struct payloads for " ++ field.name);
-            const payload_fields = reflect.structFields(field.type);
-
-            var result: field.type = undefined;
-            var fields_seen = compat.staticBitSetEmpty(payload_fields.len);
-            errdefer freeStructFields(field.type, &result, fields_seen, allocator);
-
-            inline for (payload_fields, 0..) |sf, i| {
-                if (comptime sf.defaultValue()) |dv| {
-                    @field(result, sf.name) = dv;
-                    fields_seen.set(i);
-                }
-            }
-
-            while (try map.nextKey(allocator)) |field_key| {
-                var matched = false;
-                inline for (payload_fields, 0..) |sf, i| {
-                    if (std.mem.eql(u8, field_key, sf.name)) {
-                        @field(result, sf.name) = try map.nextValue(sf.type, allocator);
-                        fields_seen.set(i);
-                        matched = true;
-                    }
-                }
-                if (!matched) try map.skipValue();
-            }
-
-            inline for (payload_fields, 0..) |sf, i| {
-                if (!fields_seen.isSet(i)) {
-                    if (@typeInfo(sf.type) == .optional) {
-                        @field(result, sf.name) = null;
-                    } else {
-                        return deserializer.raiseError(error.MissingField);
-                    }
-                }
-            }
-
-            return @unionInit(T, field.name, result);
+    return name orelse d.raiseError(error.MissingField);
+}
+fn WithoutTagMap(comptime A: type, comptime D: type, comptime tag_key: []const u8) type {
+    return struct {
+        base: A,
+        parent: *D,
+        const Self = @This();
+        pub const Error = D.Error;
+        fn access(self: *Self) if (@typeInfo(A) == .pointer) A else *A {
+            if (comptime @typeInfo(A) == .pointer) return self.base;
+            return &self.base;
         }
-    }
-
-    return deserializer.raiseError(error.UnexpectedToken);
+        pub fn nextKey(self: *Self, allocator: Allocator) Error!?[]const u8 {
+            while (try self.access().nextKey(allocator)) |key| {
+                if (!std.mem.eql(u8, key, tag_key)) return key;
+                defer releaseKey(self.access(), key, allocator);
+                try self.access().skipValue();
+            }
+            return null;
+        }
+        pub fn nextValue(self: *Self, comptime T: type, allocator: Allocator) Error!T {
+            return self.access().nextValue(T, allocator);
+        }
+        pub fn skipValue(self: *Self) Error!void {
+            return self.access().skipValue();
+        }
+        pub fn freeKey(self: *Self, key: []const u8, allocator: Allocator) void {
+            releaseKey(self.access(), key, allocator);
+        }
+        pub fn raiseError(self: *Self, err: anyerror) Error {
+            return self.parent.raiseError(err);
+        }
+    };
+}
+const releaseKey = freeKey;
+fn WithoutTagDeserializer(comptime D: type, comptime tag_key: []const u8) type {
+    return struct {
+        parent: *D,
+        const Self = @This();
+        pub const Error = D.Error;
+        pub fn deserializeStruct(self: *Self, comptime T: type) Error!WithoutTagMap(@typeInfo(@TypeOf(@as(*D, undefined).deserializeStruct(T))).error_union.payload, D, tag_key) {
+            return .{ .base = try self.parent.deserializeStruct(T), .parent = self.parent };
+        }
+        pub fn raiseError(self: *Self, err: anyerror) Error {
+            return self.parent.raiseError(err);
+        }
+    };
 }
 
-fn deserializeUnionAdjacentSchema(
-    comptime T: type,
-    allocator: Allocator,
-    deserializer: anytype,
-    comptime schema: anytype,
-) @TypeOf(deserializer.*).Error!T {
-    const fields = reflect.unionFields(T);
-    const tag_field = comptime opts.getTagFieldSchema(T, schema);
-    const content_field = comptime opts.getContentFieldSchema(T, schema);
-
-    var map = try deserializer.deserializeStruct(T);
-
-    var tag_name: ?[]const u8 = null;
-    var found_content = false;
-    var result: ?T = null;
-
-    while (try map.nextKey(allocator)) |key| {
-        if (std.mem.eql(u8, key, tag_field)) {
-            tag_name = try map.nextValue([]const u8, allocator);
-        } else if (std.mem.eql(u8, key, content_field)) {
-            const name = tag_name orelse return deserializer.raiseError(error.UnexpectedToken);
-            found_content = true;
-            inline for (fields) |field| {
-                if (opts.matchesDeserializeName(T, field.name, name, schema)) {
-                    if (field.type == void) {
-                        try map.skipValue();
-                        result = @unionInit(T, field.name, {});
-                    } else {
-                        const payload = try map.nextValue(field.type, allocator);
-                        result = @unionInit(T, field.name, payload);
-                    }
-                }
+fn deserializeUnionInternalSchema(comptime T: type, allocator: Allocator, d: anytype, comptime schema: anytype, comptime oob_map: anytype) @TypeOf(d.*).Error!T {
+    const saved = d.*;
+    const name = try unionTag(T, allocator, d, schema);
+    defer ownership.free([]const u8, name, allocator, {}, ownership.borrowedInput(d));
+    inline for (reflect.unionFields(T)) |f| {
+        if (opts.matchesDeserializeName(T, f.name, name, schema)) {
+            if (f.type == void) return @unionInit(T, f.name, {});
+            d.* = saved;
+            if (comptime opts.hasCustomDeserializer(f.type) or
+                (@TypeOf(oob_map) != void and findOobAdapter(f.type, oob_map) != null))
+            {
+                var filtered = WithoutTagDeserializer(@TypeOf(d.*), opts.getTagFieldSchema(T, schema)){ .parent = d };
+                return @unionInit(T, f.name, try deserializeSchema(f.type, allocator, &filtered, {}, oob_map));
             }
-        } else {
-            try map.skipValue();
+            var access = try d.deserializeStruct(f.type);
+            const payload = try structFromMap(f.type, allocator, &access, {}, oob_map, opts.getTagFieldSchema(T, schema));
+            return @unionInit(T, f.name, payload);
         }
     }
-
-    if (result) |r| return r;
-
-    if (tag_name) |name| {
-        if (!found_content) {
-            inline for (fields) |field| {
-                if (field.type == void and opts.matchesDeserializeName(T, field.name, name, schema))
-                    return @unionInit(T, field.name, {});
+    return d.raiseError(error.UnexpectedToken);
+}
+fn deserializeUnionAdjacentSchema(comptime T: type, allocator: Allocator, d: anytype, comptime schema: anytype, comptime oob_map: anytype) @TypeOf(d.*).Error!T {
+    const saved = d.*;
+    const name = try unionTag(T, allocator, d, schema);
+    defer ownership.free([]const u8, name, allocator, {}, ownership.borrowedInput(d));
+    inline for (reflect.unionFields(T)) |f| {
+        if (opts.matchesDeserializeName(T, f.name, name, schema)) {
+            d.* = saved;
+            var access = try d.deserializeStruct(T);
+            var payload: ?f.type = null;
+            errdefer if (payload) |v| ownership.free(f.type, v, allocator, {}, ownership.borrowedInput(d));
+            while (try access.nextKey(allocator)) |key| {
+                defer freeKey(&access, key, allocator);
+                if (std.mem.eql(u8, key, comptime opts.getContentFieldSchema(T, schema))) {
+                    if (payload != null) return d.raiseError(error.DuplicateField);
+                    if (f.type == void) {
+                        try access.skipValue();
+                        payload = {};
+                    } else payload = try nextValue(f.type, allocator, &access, oob_map);
+                } else try access.skipValue();
             }
+            if (f.type == void) return @unionInit(T, f.name, {});
+            return @unionInit(T, f.name, payload orelse return d.raiseError(error.MissingField));
         }
     }
-
-    return deserializer.raiseError(error.MissingField);
+    return d.raiseError(error.UnexpectedToken);
 }
 
 fn deserializeMapSchema(
@@ -556,24 +488,17 @@ fn deserializeMapSchema(
     deserializer: anytype,
     comptime oob_map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
-    _ = oob_map;
     const K = kind_mod.MapKeyType(T);
     const V = kind_mod.MapValueType(T);
     const managed = comptime kind_mod.isMapManaged(T);
 
     var result: T = if (managed) T.init(allocator) else .{};
-    errdefer {
-        var it = result.iterator();
-        while (it.next()) |entry| {
-            freeAllocated(V, entry.value_ptr.*, allocator);
-            if (K == []const u8) freeAllocated(K, entry.key_ptr.*, allocator);
-        }
-        if (managed) result.deinit() else result.deinit(allocator);
-    }
+    errdefer ownership.free(T, result, allocator, {}, ownership.borrowedInput(deserializer));
 
     var map = try deserializer.deserializeStruct(T);
 
     while (try map.nextKey(allocator)) |key| {
+        defer freeKey(&map, key, allocator);
         const k: K = if (K == []const u8) blk: {
             const owned = allocator.alloc(u8, key.len) catch return deserializer.raiseError(error.OutOfMemory);
             @memcpy(owned, key);
@@ -583,24 +508,21 @@ fn deserializeMapSchema(
         else
             @compileError("Unsupported map key type: " ++ @typeName(K));
 
-        const v = map.nextValue(V, allocator) catch |err| {
+        const v = nextValue(V, allocator, &map, oob_map) catch |err| {
             if (K == []const u8) allocator.free(k);
             return err;
         };
 
-        if (managed) {
-            result.put(k, v) catch {
-                if (K == []const u8) allocator.free(k);
-                freeAllocated(V, v, allocator);
-                return deserializer.raiseError(error.OutOfMemory);
-            };
-        } else {
-            result.put(allocator, k, v) catch {
-                if (K == []const u8) allocator.free(k);
-                freeAllocated(V, v, allocator);
-                return deserializer.raiseError(error.OutOfMemory);
-            };
+        errdefer {
+            if (K == []const u8) allocator.free(k);
+            ownership.free(V, v, allocator, {}, ownership.borrowedInput(deserializer));
         }
+        const entry = if (managed) try result.getOrPut(k) else try result.getOrPut(allocator, k);
+        if (entry.found_existing) {
+            if (K == []const u8) allocator.free(k);
+            ownership.free(V, entry.value_ptr.*, allocator, {}, ownership.borrowedInput(deserializer));
+        }
+        entry.value_ptr.* = v;
     }
 
     return result;
@@ -617,13 +539,15 @@ fn deserializeUnionUntaggedSchema(
         if (field.type == void) {
             if (deserializer.deserializeVoid()) {
                 return @unionInit(T, field.name, {});
-            } else |_| {
+            } else |err| {
+                if (err == error.OutOfMemory) return deserializer.raiseError(error.OutOfMemory);
                 deserializer.* = saved;
             }
         } else {
             if (deserializeSchema(field.type, allocator, deserializer, {}, map)) |payload| {
                 return @unionInit(T, field.name, payload);
-            } else |_| {
+            } else |err| {
+                if (err == error.OutOfMemory) return deserializer.raiseError(error.OutOfMemory);
                 deserializer.* = saved;
             }
         }
@@ -639,20 +563,20 @@ const MockMapAccess = struct {
     values: []const MockValue,
     pos: usize = 0,
 
-    pub const Error = error{ UnknownField, MissingField, UnexpectedEof, OutOfMemory, WithFailed, WrongType };
+    pub const Error = error{ UnknownField, DuplicateField, MissingField, UnexpectedEof, OutOfMemory, WithFailed, WrongType };
 
     pub fn nextKey(self: *MockMapAccess, _: Allocator) Error!?[]const u8 {
         if (self.pos >= self.keys.len) return null;
         return self.keys[self.pos];
     }
 
-    pub fn nextValue(self: *MockMapAccess, comptime T: type, _: Allocator) Error!T {
+    pub fn nextValue(self: *MockMapAccess, comptime T: type, allocator: Allocator) Error!T {
         if (self.pos >= self.values.len) return error.UnexpectedEof;
         const v = self.values[self.pos];
         self.pos += 1;
         return switch (v) {
             .int => |i| if (T == i32 or T == u32 or T == u64 or T == i64) @intCast(i) else error.WrongType,
-            .string => |s| if (T == []const u8) s else error.WrongType,
+            .string => |s| if (T == []const u8) try allocator.dupe(u8, s) else error.WrongType,
             .boolean => |b| if (T == bool) b else error.WrongType,
             .float => |f| if (T == f64 or T == f32) @floatCast(f) else error.WrongType,
         };
@@ -666,6 +590,7 @@ const MockMapAccess = struct {
         return switch (err) {
             error.UnknownField => error.UnknownField,
             error.MissingField => error.MissingField,
+            error.DuplicateField => error.DuplicateField,
             error.WithFailed => error.WithFailed,
             else => error.WrongType,
         };
@@ -720,6 +645,7 @@ const MockDeserializer = struct {
         return switch (err) {
             error.UnknownField => error.UnknownField,
             error.MissingField => error.MissingField,
+            error.DuplicateField => error.DuplicateField,
             error.WithFailed => error.WithFailed,
             else => error.WrongType,
         };
@@ -864,6 +790,7 @@ test "deserialize struct with rename" {
     };
     const val = try deserialize(User, testing.allocator, &deser, .{});
     try testing.expectEqual(@as(u64, 42), val.id);
+    defer testing.allocator.free(val.first_name);
     try testing.expectEqualStrings("Bob", val.first_name);
 }
 

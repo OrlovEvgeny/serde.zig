@@ -23,6 +23,7 @@ pub const parse = parser_mod.parse;
 /// The top-level value must be a struct (TOML requires a table at the root).
 pub fn toSlice(allocator: std.mem.Allocator, value: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriter(allocator, &aw.writer, value);
     return aw.toOwnedSlice();
 }
@@ -52,6 +53,7 @@ pub fn toWriter(allocator: std.mem.Allocator, writer: *compat.Io.Writer, value: 
 /// Serialize a value to a TOML byte slice with an external schema.
 pub fn toSliceSchema(allocator: std.mem.Allocator, value: anytype, comptime schema: anytype) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
     try toWriterSchema(allocator, &aw.writer, value, schema);
     return aw.toOwnedSlice();
 }
@@ -71,7 +73,9 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
     if (comptime kind_mod.typeKind(T) != .@"struct")
         @compileError("TOML top-level type must be a struct, got: " ++ @typeName(T));
 
-    const table = try parser_mod.parse(allocator, input);
+    var parse_arena = std.heap.ArenaAllocator.init(allocator);
+    defer parse_arena.deinit();
+    const table = try parser_mod.parse(parse_arena.allocator(), input);
     var deser = Deserializer.init(&table);
     return core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
 }
@@ -89,7 +93,9 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
     if (comptime kind_mod.typeKind(T) != .@"struct")
         @compileError("TOML top-level type must be a struct, got: " ++ @typeName(T));
 
-    const table = try parser_mod.parse(allocator, input);
+    var parse_arena = std.heap.ArenaAllocator.init(allocator);
+    defer parse_arena.deinit();
+    const table = try parser_mod.parse(parse_arena.allocator(), input);
     var deser = Deserializer.init(&table);
     return core_deserialize.deserialize(T, allocator, &deser, .{});
 }
@@ -122,6 +128,16 @@ pub fn toValue(allocator: std.mem.Allocator, value: anytype) !CoreValue {
 /// Convert a dynamic Value back to a typed Zig value.
 pub fn fromValue(comptime T: type, allocator: std.mem.Allocator, value: CoreValue) !T {
     return value.toType(T, allocator);
+}
+
+/// Parse into a result that owns a separate arena. Release it with `.deinit()`.
+pub fn fromSliceManaged(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !@import("../../core/parsed.zig").Parsed(T) {
+    return fromSliceManagedSchema(T, allocator, input, {});
+}
+
+/// Parse with an external schema into an owning result.
+pub fn fromSliceManagedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !@import("../../core/parsed.zig").Parsed(T) {
+    return @import("../../core/parsed.zig").parse(T, allocator, input, schema, @This());
 }
 
 // Tests.

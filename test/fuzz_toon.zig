@@ -36,4 +36,3 @@ export fn LLVMFuzzerTestOneInput(data: [*]const u8, size: usize) callconv(.c) c_
 
     return 0;
 }
-

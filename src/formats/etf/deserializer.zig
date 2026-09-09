@@ -13,6 +13,7 @@ const atom_buffer_len = 510;
 pub const DeserializeError = codec.DecodeError || error{
     UnknownField,
     MissingField,
+    DuplicateField,
     WrongType,
     WithFailed,
     InvalidNumber,
@@ -552,6 +553,7 @@ fn errorFromAny(err: anyerror) DeserializeError {
     return switch (err) {
         error.UnknownField => error.UnknownField,
         error.MissingField => error.MissingField,
+        error.DuplicateField => error.DuplicateField,
         error.UnexpectedEof => error.UnexpectedEof,
         error.OutOfMemory => error.OutOfMemory,
         error.WithFailed => error.WithFailed,

@@ -17,6 +17,7 @@ pub const DeserializeError = error{
     UnexpectedToken,
     UnknownField,
     MissingField,
+    DuplicateField,
     InvalidNumber,
     InvalidQuoting,
     FieldCountMismatch,
@@ -194,6 +195,7 @@ fn errorFromAny(err: anyerror) DeserializeError {
     return switch (err) {
         error.UnknownField => error.UnknownField,
         error.MissingField => error.MissingField,
+        error.DuplicateField => error.DuplicateField,
         error.UnexpectedEof => error.UnexpectedEof,
         error.FieldCountMismatch => error.FieldCountMismatch,
         error.OutOfMemory => error.OutOfMemory,

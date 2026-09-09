@@ -20,6 +20,14 @@ fn writeJsonStringContents(writer: *compat.Io.Writer, value: []const u8, opts: S
     var start: usize = 0;
     var i: usize = 0;
     while (i < value.len) : (i += 1) {
+        while (i + 16 <= value.len) {
+            const bytes: @Vector(16, u8) = value[i..][0..16].*;
+            var special = (bytes == @as(@Vector(16, u8), @splat('"'))) | (bytes == @as(@Vector(16, u8), @splat('\\'))) | (bytes < @as(@Vector(16, u8), @splat(0x20)));
+            if (opts.escape_js_unsafe) special |= bytes == @as(@Vector(16, u8), @splat(0xE2));
+            if (@reduce(.Or, special)) break;
+            i += 16;
+        }
+        if (i == value.len) break;
         const c = value[i];
 
         if (opts.escape_js_unsafe and c == 0xE2 and i + 2 < value.len and value[i + 1] == 0x80) {

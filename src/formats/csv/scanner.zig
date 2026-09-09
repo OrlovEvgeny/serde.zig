@@ -21,6 +21,7 @@ pub const Field = struct {
 };
 
 pub const ScanError = error{
+    OutOfMemory,
     UnexpectedEof,
     InvalidQuoting,
 };
@@ -136,7 +137,7 @@ pub const Scanner = struct {
             self.pos += 1;
             self.at_row_start = true;
             var empty: std.ArrayList(Field) = .empty;
-            return empty.toOwnedSlice(allocator) catch return error.UnexpectedEof;
+            return empty.toOwnedSlice(allocator) catch return error.OutOfMemory;
         }
         if (self.input[self.pos] == '\r') {
             self.pos += 1;
@@ -144,7 +145,7 @@ pub const Scanner = struct {
                 self.pos += 1;
             self.at_row_start = true;
             var empty: std.ArrayList(Field) = .empty;
-            return empty.toOwnedSlice(allocator) catch return error.UnexpectedEof;
+            return empty.toOwnedSlice(allocator) catch return error.OutOfMemory;
         }
 
         var fields: std.ArrayList(Field) = .empty;
@@ -154,13 +155,13 @@ pub const Scanner = struct {
         while (true) {
             const field = try self.nextField();
             if (field) |f| {
-                fields.append(allocator, f) catch return error.UnexpectedEof;
+                fields.append(allocator, f) catch return error.OutOfMemory;
             } else {
                 break;
             }
         }
 
-        return fields.toOwnedSlice(allocator) catch return error.UnexpectedEof;
+        return fields.toOwnedSlice(allocator) catch return error.OutOfMemory;
     }
 
     fn scanUnquotedField(self: *Scanner) Field {
