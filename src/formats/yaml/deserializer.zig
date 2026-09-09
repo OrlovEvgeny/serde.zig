@@ -22,6 +22,18 @@ pub const DeserializeError = error{
 };
 
 pub const Deserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const Deserializer) ?[]const u8 {
+            return null;
+        }
+        pub fn checkpoint(self: *const Deserializer) Deserializer {
+            return self.*;
+        }
+        pub fn restore(self: *Deserializer, saved: Deserializer) void {
+            self.* = saved;
+        }
+    };
+
     value: *const Value,
 
     pub const Error = DeserializeError;
@@ -115,6 +127,12 @@ pub const Deserializer = struct {
 };
 
 pub const MapAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const MapAccess) ?[]const u8 {
+            return null;
+        }
+    };
+
     mapping: *const Mapping,
     iter: Mapping.Iterator,
 
@@ -143,6 +161,15 @@ pub const MapAccess = struct {
 };
 
 pub const SeqAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const SeqAccess) ?[]const u8 {
+            return null;
+        }
+        pub fn sizeHint(_: *const SeqAccess) ?usize {
+            return null;
+        }
+    };
+
     items: []const Value,
     pos: usize,
 
@@ -199,6 +226,18 @@ fn deserializeUnionFromValue(val: *const Value, comptime T: type, allocator: All
 
 // Wraps a single Value to provide the Deserializer interface for custom zerdeDeserialize.
 const ValueDeserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const ValueDeserializer) ?[]const u8 {
+            return null;
+        }
+        pub fn checkpoint(self: *const ValueDeserializer) ValueDeserializer {
+            return self.*;
+        }
+        pub fn restore(self: *ValueDeserializer, saved: ValueDeserializer) void {
+            self.* = saved;
+        }
+    };
+
     val: *const Value,
 
     pub const Error = DeserializeError;

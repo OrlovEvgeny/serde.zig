@@ -34,6 +34,18 @@ pub const Options = struct {
 };
 
 pub const Deserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const Deserializer) ?[]const u8 {
+            return null;
+        }
+        pub fn checkpoint(self: *const Deserializer) Deserializer {
+            return self.*;
+        }
+        pub fn restore(self: *Deserializer, saved: Deserializer) void {
+            self.* = saved;
+        }
+    };
+
     headers: []const []const u8,
     fields: []const Field,
     col: usize,
@@ -99,6 +111,12 @@ pub const Deserializer = struct {
 };
 
 pub const MapAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const MapAccess) ?[]const u8 {
+            return null;
+        }
+    };
+
     headers: []const []const u8,
     fields: []const Field,
     col: usize,

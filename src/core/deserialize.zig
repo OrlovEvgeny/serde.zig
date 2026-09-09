@@ -1,3 +1,4 @@
+const protocol = @import("protocol.zig");
 const std = @import("std");
 const compat = @import("compat");
 const reflect = @import("../reflect.zig");
@@ -238,7 +239,10 @@ fn structFromMap(comptime T: type, allocator: Allocator, map: anytype, comptime 
                 F.ptr(&result).* = dv;
             } else if (@typeInfo(F.field.type) == .optional) {
                 F.ptr(&result).* = null;
-            } else return map.raiseError(error.MissingField);
+            } else {
+                protocol.missingField(map, comptime opts.wireFieldNameForDir(F.Parent, F.field.name, F.schema, .deserialize));
+                return map.raiseError(error.MissingField);
+            }
         }
     }
     return result;
@@ -304,13 +308,10 @@ fn deserializeSlice(comptime T: type, allocator: Allocator, d: anytype, comptime
         for (items.items) |v| ownership.free(C, v, allocator, {}, ownership.borrowedInput(d));
         items.deinit(allocator);
     }
-    if (@hasField(@TypeOf(seq), "remaining")) {
-        // Length prefixes are hints until the input is validated. Bound the
-        // eager allocation so truncated hostile input cannot reserve gigabytes.
+    if (protocol.sizeHint(&seq)) |hint| {
+        // Unvalidated length prefixes must not reserve unbounded memory.
         const max_hint = @max(1, 64 * 1024 / @max(1, @sizeOf(C)));
-        try items.ensureTotalCapacityPrecise(allocator, @min(seq.remaining, max_hint));
-    } else if (@hasField(@TypeOf(seq), "items")) {
-        try items.ensureTotalCapacityPrecise(allocator, seq.items.len);
+        try items.ensureTotalCapacityPrecise(allocator, @min(hint, max_hint));
     }
     while (try nextElement(C, allocator, &seq, map)) |v| {
         errdefer ownership.free(C, v, allocator, {}, ownership.borrowedInput(d));
@@ -341,16 +342,16 @@ fn deserializeUnionDispatchSchema(
 /// External union deser with rename/alias. Tries bare string first (void
 /// variants), then {"variant": payload} form. Uses save/restore like untagged.
 fn deserializeUnionExternalSchema(comptime T: type, allocator: Allocator, d: anytype, comptime schema: anytype, comptime oob_map: anytype) @TypeOf(d.*).Error!T {
-    const saved = d.*;
+    const saved = protocol.checkpoint(d);
     if (d.deserializeString(allocator)) |name| {
         defer ownership.free([]const u8, name, allocator, {}, ownership.borrowedInput(d));
         inline for (reflect.unionFields(T)) |f| {
             if (f.type == void and opts.matchesDeserializeName(T, f.name, name, schema)) return @unionInit(T, f.name, {});
         }
-        d.* = saved;
+        protocol.restore(d, saved);
     } else |err| {
         if (err == error.OutOfMemory) return d.raiseError(error.OutOfMemory);
-        d.* = saved;
+        protocol.restore(d, saved);
     }
     var access = try d.deserializeStruct(T);
     const key = (try access.nextKey(allocator)) orelse return d.raiseError(error.MissingField);
@@ -414,8 +415,16 @@ fn WithoutTagMap(comptime A: type, comptime D: type, comptime tag_key: []const u
         pub fn freeKey(self: *Self, key: []const u8, allocator: Allocator) void {
             releaseKey(self.access(), key, allocator);
         }
+        pub const serde_protocol = struct {
+            pub fn borrowedInput(self: *const Self) ?[]const u8 {
+                return ownership.borrowedInput(self.parent);
+            }
+            pub fn missingField(self: *Self, name: []const u8) void {
+                protocol.missingField(self.access(), name);
+            }
+        };
         pub fn raiseError(self: *Self, err: anyerror) Error {
-            return self.parent.raiseError(err);
+            return self.access().raiseError(err);
         }
     };
 }
@@ -435,13 +444,13 @@ fn WithoutTagDeserializer(comptime D: type, comptime tag_key: []const u8) type {
 }
 
 fn deserializeUnionInternalSchema(comptime T: type, allocator: Allocator, d: anytype, comptime schema: anytype, comptime oob_map: anytype) @TypeOf(d.*).Error!T {
-    const saved = d.*;
+    const saved = protocol.checkpoint(d);
     const name = try unionTag(T, allocator, d, schema);
     defer ownership.free([]const u8, name, allocator, {}, ownership.borrowedInput(d));
     inline for (reflect.unionFields(T)) |f| {
         if (opts.matchesDeserializeName(T, f.name, name, schema)) {
             if (f.type == void) return @unionInit(T, f.name, {});
-            d.* = saved;
+            protocol.restore(d, saved);
             if (comptime opts.hasCustomDeserializer(f.type) or
                 (@TypeOf(oob_map) != void and findOobAdapter(f.type, oob_map) != null))
             {
@@ -456,12 +465,12 @@ fn deserializeUnionInternalSchema(comptime T: type, allocator: Allocator, d: any
     return d.raiseError(error.UnexpectedToken);
 }
 fn deserializeUnionAdjacentSchema(comptime T: type, allocator: Allocator, d: anytype, comptime schema: anytype, comptime oob_map: anytype) @TypeOf(d.*).Error!T {
-    const saved = d.*;
+    const saved = protocol.checkpoint(d);
     const name = try unionTag(T, allocator, d, schema);
     defer ownership.free([]const u8, name, allocator, {}, ownership.borrowedInput(d));
     inline for (reflect.unionFields(T)) |f| {
         if (opts.matchesDeserializeName(T, f.name, name, schema)) {
-            d.* = saved;
+            protocol.restore(d, saved);
             var access = try d.deserializeStruct(T);
             var payload: ?f.type = null;
             errdefer if (payload) |v| ownership.free(f.type, v, allocator, {}, ownership.borrowedInput(d));
@@ -535,20 +544,20 @@ fn deserializeUnionUntaggedSchema(
     comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
     inline for (reflect.unionFields(T)) |field| {
-        const saved = deserializer.*;
+        const saved = protocol.checkpoint(deserializer);
         if (field.type == void) {
             if (deserializer.deserializeVoid()) {
                 return @unionInit(T, field.name, {});
             } else |err| {
                 if (err == error.OutOfMemory) return deserializer.raiseError(error.OutOfMemory);
-                deserializer.* = saved;
+                protocol.restore(deserializer, saved);
             }
         } else {
             if (deserializeSchema(field.type, allocator, deserializer, {}, map)) |payload| {
                 return @unionInit(T, field.name, payload);
             } else |err| {
                 if (err == error.OutOfMemory) return deserializer.raiseError(error.OutOfMemory);
-                deserializer.* = saved;
+                protocol.restore(deserializer, saved);
             }
         }
     }

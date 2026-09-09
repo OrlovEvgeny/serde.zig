@@ -38,3 +38,7 @@ pub const Entry = value_mod.Entry;
 
 pub const freeAllocated = @import("deserialize.zig").freeAllocated;
 pub const freeAllocatedSchema = @import("deserialize.zig").freeAllocatedSchema;
+
+pub const assertSerializer = interface.assertSerializer;
+pub const assertDeserializer = interface.assertDeserializer;
+pub const releaseString = @import("ownership.zig").releaseString;

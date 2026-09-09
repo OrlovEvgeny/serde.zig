@@ -20,6 +20,18 @@ pub const DeserializeError = error{
 };
 
 pub const Deserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const Deserializer) ?[]const u8 {
+            return if (self.borrow_strings) self.input else null;
+        }
+        pub fn checkpoint(self: *const Deserializer) Deserializer {
+            return self.*;
+        }
+        pub fn restore(self: *Deserializer, saved: Deserializer) void {
+            self.* = saved;
+        }
+    };
+
     input: []const u8,
     pos: usize = 0,
     borrow_strings: bool = false,
@@ -311,6 +323,12 @@ pub const Deserializer = struct {
 };
 
 pub const MapAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const MapAccess) ?[]const u8 {
+            return Deserializer.serde_protocol.borrowedInput(self.parent);
+        }
+    };
+
     parent: *Deserializer,
 
     pub const Error = DeserializeError;
@@ -358,6 +376,15 @@ pub const MapAccess = struct {
 };
 
 pub const SeqAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const SeqAccess) ?[]const u8 {
+            return Deserializer.serde_protocol.borrowedInput(self.parent);
+        }
+        pub fn sizeHint(_: *const SeqAccess) ?usize {
+            return null;
+        }
+    };
+
     parent: *Deserializer,
 
     pub const Error = DeserializeError;
