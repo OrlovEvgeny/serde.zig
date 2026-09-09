@@ -41,6 +41,17 @@ pub fn deserializeSchema(
     comptime schema: anytype,
     comptime map: anytype,
 ) @TypeOf(deserializer.*).Error!T {
+    const D = @TypeOf(deserializer.*);
+    if (comptime @hasDecl(D, "serde_protocol") and @hasDecl(D.serde_protocol, "failure")) {
+        return deserializeSchemaImpl(T, allocator, deserializer, schema, map) catch |err| {
+            D.serde_protocol.failure(deserializer, err);
+            return err;
+        };
+    }
+    return deserializeSchemaImpl(T, allocator, deserializer, schema, map);
+}
+
+fn deserializeSchemaImpl(comptime T: type, allocator: Allocator, deserializer: anytype, comptime schema: anytype, comptime map: anytype) @TypeOf(deserializer.*).Error!T {
     if (comptime opts.hasCustomDeserializer(T)) {
         return T.zerdeDeserialize(T, allocator, deserializer);
     }
@@ -382,11 +393,14 @@ fn unionTag(comptime T: type, allocator: Allocator, d: anytype, comptime schema:
     while (try access.nextKey(allocator)) |key| {
         defer freeKey(&access, key, allocator);
         if (std.mem.eql(u8, key, comptime opts.getTagFieldSchema(T, schema))) {
-            if (name != null) return d.raiseError(error.DuplicateField);
+            if (name != null) return access.raiseError(error.DuplicateField);
             name = try access.nextValue([]const u8, allocator);
         } else try access.skipValue();
     }
-    return name orelse d.raiseError(error.MissingField);
+    return name orelse {
+        protocol.missingField(&access, comptime opts.getTagFieldSchema(T, schema));
+        return access.raiseError(error.MissingField);
+    };
 }
 fn WithoutTagMap(comptime A: type, comptime D: type, comptime tag_key: []const u8) type {
     return struct {
@@ -434,6 +448,11 @@ fn WithoutTagDeserializer(comptime D: type, comptime tag_key: []const u8) type {
         parent: *D,
         const Self = @This();
         pub const Error = D.Error;
+        pub const serde_protocol = struct {
+            pub fn borrowedInput(self: *const Self) ?[]const u8 {
+                return ownership.borrowedInput(self.parent);
+            }
+        };
         pub fn deserializeStruct(self: *Self, comptime T: type) Error!WithoutTagMap(@typeInfo(@TypeOf(@as(*D, undefined).deserializeStruct(T))).error_union.payload, D, tag_key) {
             return .{ .base = try self.parent.deserializeStruct(T), .parent = self.parent };
         }
@@ -477,7 +496,7 @@ fn deserializeUnionAdjacentSchema(comptime T: type, allocator: Allocator, d: any
             while (try access.nextKey(allocator)) |key| {
                 defer freeKey(&access, key, allocator);
                 if (std.mem.eql(u8, key, comptime opts.getContentFieldSchema(T, schema))) {
-                    if (payload != null) return d.raiseError(error.DuplicateField);
+                    if (payload != null) return access.raiseError(error.DuplicateField);
                     if (f.type == void) {
                         try access.skipValue();
                         payload = {};
@@ -485,7 +504,10 @@ fn deserializeUnionAdjacentSchema(comptime T: type, allocator: Allocator, d: any
                 } else try access.skipValue();
             }
             if (f.type == void) return @unionInit(T, f.name, {});
-            return @unionInit(T, f.name, payload orelse return d.raiseError(error.MissingField));
+            return @unionInit(T, f.name, payload orelse {
+                protocol.missingField(&access, comptime opts.getContentFieldSchema(T, schema));
+                return access.raiseError(error.MissingField);
+            });
         }
     }
     return d.raiseError(error.UnexpectedToken);

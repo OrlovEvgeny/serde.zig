@@ -318,10 +318,16 @@ pub const Scanner = struct {
     }
 
     fn scanLiteral(self: *Scanner, comptime expected: []const u8, token: Token) ScanError!Token {
-        if (self.pos + expected.len > self.input.len)
+        if (self.pos + expected.len > self.input.len) {
+            self.pos = self.input.len;
             return error.UnexpectedEof;
-        if (!std.mem.eql(u8, self.input[self.pos..][0..expected.len], expected))
-            return error.UnexpectedToken;
+        }
+        for (expected, 0..) |byte, i| {
+            if (self.input[self.pos + i] != byte) {
+                self.pos += i;
+                return error.UnexpectedToken;
+            }
+        }
         self.pos += expected.len;
         return token;
     }
