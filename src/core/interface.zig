@@ -57,8 +57,10 @@ fn require(comptime T: type, comptime name: []const u8) void {
         @compileError(@typeName(T) ++ "." ++ name ++ ": expected a function");
 }
 fn requireError(comptime T: type) void {
+    if (@typeInfo(T) != .@"struct" and @typeInfo(T) != .@"union")
+        @compileError(@typeName(T) ++ ": expected a serde backend/container type");
     if (!@hasDecl(T, "Error")) @compileError(@typeName(T) ++ ": missing serde Error declaration");
-    if (@typeInfo(T.Error) != .error_set) @compileError(@typeName(T) ++ ".Error must be an error set");
+    if (@TypeOf(T.Error) != type or @typeInfo(T.Error) != .error_set) @compileError(@typeName(T) ++ ".Error must be an error set");
 }
 fn payload(comptime T: type) type {
     if (@typeInfo(T) != .error_union) @compileError("serde methods must return an error union");
@@ -67,7 +69,10 @@ fn payload(comptime T: type) type {
 
 /// Opt-in structural validation. This does not prove format semantics or supported types.
 pub fn assertSerializer(comptime S: type) void {
-    comptime checkSerializer(S, .{});
+    comptime {
+        @setEvalBranchQuota(100_000);
+        checkSerializer(S, .{});
+    }
 }
 fn checkSerializer(comptime S: type, comptime visited: anytype) void {
     inline for (visited) |V| if (S == V) return;
@@ -87,7 +92,9 @@ fn checkSerializer(comptime S: type, comptime visited: anytype) void {
     checkResult(A, "end", @TypeOf(@as(*A, undefined).end()), void);
     if (hasKnownLengthContainers(S)) {
         const AL = payload(@TypeOf(@as(*S, undefined).beginArrayLen(0)));
+        requireError(AL);
         require(AL, "end");
+        checkResult(AL, "end", @TypeOf(@as(*AL, undefined).end()), void);
         checkSerializer(AL, visited ++ .{S});
         checkStructContainer(payload(@TypeOf(@as(*S, undefined).beginStructLen(0))));
     }
@@ -105,6 +112,7 @@ fn checkStructContainer(comptime M: type) void {
 /// Error!void for unsupported container profiles; these are not full backends.
 pub fn assertDeserializer(comptime D: type) void {
     comptime {
+        @setEvalBranchQuota(100_000);
         requireError(D);
         for (.{ "deserializeBool", "deserializeInt", "deserializeFloat", "deserializeString", "deserializeVoid", "deserializeOptional", "deserializeStruct", "deserializeSeqAccess", "deserializeEnum", "deserializeUnion", "raiseError" }) |name| require(D, name);
         const M = payload(@TypeOf(@as(*D, undefined).deserializeStruct(struct {})));
@@ -142,4 +150,16 @@ pub fn assertDeserializer(comptime D: type) void {
 fn checkResult(comptime Owner: type, comptime method: []const u8, comptime Result: type, comptime Expected: type) void {
     if (@typeInfo(Result) != .error_union or @typeInfo(Result).error_union.payload != Expected)
         @compileError(@typeName(Owner) ++ "." ++ method ++ ": expected an error union with payload " ++ @typeName(Expected));
+    comptime {
+        const declared = @typeInfo(Owner.Error).error_set orelse return;
+        const returned = @typeInfo(@typeInfo(Result).error_union.error_set).error_set orelse
+            @compileError(@typeName(Owner) ++ "." ++ method ++ ": returned errors exceed the declared Error set");
+        for (returned) |err| {
+            var found = false;
+            for (declared) |allowed| {
+                if (@import("std").mem.eql(u8, err.name, allowed.name)) found = true;
+            }
+            if (!found) @compileError(@typeName(Owner) ++ "." ++ method ++ ": returned error " ++ err.name ++ " is missing from Error");
+        }
+    }
 }

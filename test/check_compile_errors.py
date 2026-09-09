@@ -10,6 +10,7 @@ for fixture, expected in (("flatten_collision.zig", "Ambiguous serde field name"
                           ("alias_collision.zig", "Ambiguous serde alias"),
                           ("missing_container_end.zig", "missing serde method end"),
                           ("missing_seq_access.zig", "missing serde method deserializeSeqAccess"),
+                          ("wrong_container_end.zig", "expected an error union with payload void"),
                           ("missing_replay.zig", "union replay requires serde_protocol.checkpoint")):
     result = subprocess.run([
         "zig", "build-exe", "-fno-emit-bin", "--dep", "serde",
