@@ -26,6 +26,8 @@
 //! const result = try serde.json.fromSlice(MyStruct, allocator, json_bytes);
 //! ```
 
+pub const testing = @import("testing/mod.zig");
+
 pub const core = @import("core/mod.zig");
 pub const compat = @import("compat");
 pub const json = @import("formats/json/mod.zig");
