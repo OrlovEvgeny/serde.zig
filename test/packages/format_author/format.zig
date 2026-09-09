@@ -3,11 +3,27 @@ const std = @import("std");
 const serde = @import("serde");
 const core = serde.core;
 const reflect = struct {
-    inline fn enumFields(comptime T: type) []const std.builtin.Type.EnumField {
-        return @typeInfo(T).@"enum".fields;
+    const EnumField = struct { name: [:0]const u8, value: comptime_int };
+    const UnionField = struct { name: [:0]const u8, type: type };
+    inline fn enumFields(comptime T: type) []const EnumField {
+        const info = @typeInfo(T).@"enum";
+        comptime var fields: []const EnumField = &.{};
+        if (comptime @hasField(@TypeOf(info), "fields")) {
+            inline for (info.fields) |f| fields = fields ++ &[_]EnumField{.{ .name = f.name, .value = f.value }};
+        } else {
+            inline for (info.field_names, info.field_values) |name, value| fields = fields ++ &[_]EnumField{.{ .name = name, .value = value }};
+        }
+        return fields;
     }
-    inline fn unionFields(comptime T: type) []const std.builtin.Type.UnionField {
-        return @typeInfo(T).@"union".fields;
+    inline fn unionFields(comptime T: type) []const UnionField {
+        const info = @typeInfo(T).@"union";
+        comptime var fields: []const UnionField = &.{};
+        if (comptime @hasField(@TypeOf(info), "fields")) {
+            inline for (info.fields) |f| fields = fields ++ &[_]UnionField{.{ .name = f.name, .type = f.type }};
+        } else {
+            inline for (info.field_names, info.field_types) |name, field_type| fields = fields ++ &[_]UnionField{.{ .name = name, .type = field_type }};
+        }
+        return fields;
     }
 };
 const Allocator = std.mem.Allocator;

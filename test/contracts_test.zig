@@ -35,3 +35,17 @@ test "releaseString respects explicit borrowing" {
     serde.core.releaseString(&d, std.testing.allocator, d.bytes);
     serde.core.releaseString(&d, std.testing.allocator, try std.testing.allocator.dupe(u8, "owned"));
 }
+
+test "restricted backend profiles retain their supported shapes" {
+    const T = struct { n: i32 };
+    inline for (.{ serde.toml, serde.zon, serde.toon }) |format| {
+        const bytes = try format.toSlice(std.testing.allocator, T{ .n = 7 });
+        defer std.testing.allocator.free(bytes);
+        var parsed = try format.fromSliceManaged(T, std.testing.allocator, bytes);
+        defer parsed.deinit();
+        try std.testing.expectEqual(@as(i32, 7), parsed.value.n);
+    }
+    var rows = try serde.csv.fromSliceManaged([]const T, std.testing.allocator, "n\n7\n");
+    defer rows.deinit();
+    try std.testing.expectEqual(@as(i32, 7), rows.value[0].n);
+}
