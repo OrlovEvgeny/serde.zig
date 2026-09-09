@@ -133,8 +133,8 @@ pub const SeqAccess = struct {
         pub fn borrowedInput(_: *const SeqAccess) ?[]const u8 {
             return null;
         }
-        pub fn sizeHint(_: *const SeqAccess) ?usize {
-            return null;
+        pub fn sizeHint(self: *const SeqAccess) ?usize {
+            return self.items.len - self.pos;
         }
     };
 
