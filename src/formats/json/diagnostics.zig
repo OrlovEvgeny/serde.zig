@@ -132,13 +132,26 @@ pub const DeserializerWithDiagnostics = struct {
         self.start();
         return self.inner.deserializeBool() catch |err| return self.fail(err, "bool");
     }
+    fn numberFailure(self: *Self, err: Error, comptime T: type) Error {
+        if (err == error.InvalidNumber) {
+            // A valid number outside T's range is a conversion failure, not a
+            // syntax error. Reuse the scanner on the cold path to distinguish it.
+            var scanner = self.inner.scanner;
+            scanner.pos = self.value_start;
+            if (scanner.next()) |token| {
+                if (token == .number)
+                    self.diagnostics.record(scanner.input, err, self.value_start, @typeName(T), .number);
+            } else |_| {}
+        }
+        return self.fail(err, @typeName(T));
+    }
     pub fn deserializeInt(self: *Self, comptime T: type) Error!T {
         self.start();
-        return self.inner.deserializeInt(T) catch |err| return self.fail(err, @typeName(T));
+        return self.inner.deserializeInt(T) catch |err| return self.numberFailure(err, T);
     }
     pub fn deserializeFloat(self: *Self, comptime T: type) Error!T {
         self.start();
-        return self.inner.deserializeFloat(T) catch |err| return self.fail(err, @typeName(T));
+        return self.inner.deserializeFloat(T) catch |err| return self.numberFailure(err, T);
     }
     pub fn deserializeString(self: *Self, allocator: Allocator) Error![]const u8 {
         self.start();

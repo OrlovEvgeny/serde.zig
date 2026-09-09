@@ -39,6 +39,9 @@ test "diagnostics syntax EOF trailing data and empty buffer" {
     try expectFailure([]u16, "[1,]", error.UnexpectedToken, "", 3);
     try expectFailure([]u16, "[1", error.UnexpectedEof, "", 2);
     try expectFailure(u8, "1 false", error.TrailingData, "", 2);
+    try expectFailure(u8, "300", error.InvalidNumber, "", 0);
+    try expectFailure(u8, "1.5", error.InvalidNumber, "", 0);
+    try expectFailure(u8, "1e+", error.InvalidNumber, "", 3);
     try expectFailure([]const u8, "\"bad\\q\"", error.InvalidEscape, "", 5);
     for (0..8) |len| {
         var buffer: [8]u8 = undefined;
