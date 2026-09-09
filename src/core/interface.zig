@@ -147,19 +147,45 @@ pub fn assertDeserializer(comptime D: type) void {
     }
 }
 
+fn errorNames(comptime E: type) ?[]const [:0]const u8 {
+    const info = @typeInfo(E).error_set;
+    // Newer Zig master exposes names directly in a struct instead of a slice.
+    if (@typeInfo(@TypeOf(info)) == .@"struct") return info.error_names;
+    const errors = info orelse return null;
+    comptime var names: [errors.len][:0]const u8 = undefined;
+    inline for (errors, 0..) |err, i| names[i] = err.name;
+    const result = names;
+    return &result;
+}
+
 fn checkResult(comptime Owner: type, comptime method: []const u8, comptime Result: type, comptime Expected: type) void {
     if (@typeInfo(Result) != .error_union or @typeInfo(Result).error_union.payload != Expected)
         @compileError(@typeName(Owner) ++ "." ++ method ++ ": expected an error union with payload " ++ @typeName(Expected));
     comptime {
-        const declared = @typeInfo(Owner.Error).error_set orelse return;
-        const returned = @typeInfo(@typeInfo(Result).error_union.error_set).error_set orelse
+        const declared = errorNames(Owner.Error) orelse return;
+        const returned = errorNames(@typeInfo(Result).error_union.error_set) orelse
             @compileError(@typeName(Owner) ++ "." ++ method ++ ": returned errors exceed the declared Error set");
         for (returned) |err| {
             var found = false;
             for (declared) |allowed| {
-                if (@import("std").mem.eql(u8, err.name, allowed.name)) found = true;
+                if (@import("std").mem.eql(u8, err, allowed)) found = true;
             }
-            if (!found) @compileError(@typeName(Owner) ++ "." ++ method ++ ": returned error " ++ err.name ++ " is missing from Error");
+            if (!found) @compileError(@typeName(Owner) ++ "." ++ method ++ ": returned error " ++ err ++ " is missing from Error");
         }
+    }
+}
+
+test "method errors may be a subset of the declared set" {
+    const Restricted = struct {
+        pub const Error = error{ First, Second };
+    };
+    const Unrestricted = struct {
+        pub const Error = anyerror;
+    };
+    comptime {
+        checkResult(Restricted, "probe", error{First}!void, void);
+        checkResult(Restricted, "probe", error{}!void, void);
+        checkResult(Unrestricted, "probe", Restricted.Error!void, void);
+        checkResult(Unrestricted, "probe", anyerror!void, void);
     }
 }
