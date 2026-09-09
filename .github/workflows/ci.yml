@@ -41,8 +41,11 @@ jobs:
       - name: Check compile-time field diagnostics
         run: python test/check_compile_errors.py
 
-      - name: Build examples and fuzz targets
-        run: zig build examples fuzz
+      - name: Build examples, fuzz targets, and documentation
+        run: zig build examples fuzz docs
+
+      - name: Test packaged integrations
+        run: python test/check_package.py
 
   benchmark:
     name: Benchmarks
