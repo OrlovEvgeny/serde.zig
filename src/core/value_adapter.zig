@@ -253,8 +253,19 @@ const SeqAccess = struct {
     }
 };
 fn narrow(err: anyerror) Errors {
-    inline for (@typeInfo(Errors).error_set.?) |e| {
-        if (err == @field(Errors, e.name)) return @field(Errors, e.name);
-    }
-    return error.WrongType;
+    return switch (err) {
+        error.OutOfMemory,
+        error.WrongType,
+        error.Overflow,
+        error.MissingField,
+        error.DuplicateField,
+        error.UnknownField,
+        error.UnknownVariant,
+        error.UnexpectedToken,
+        error.UnexpectedEof,
+        error.InvalidNumber,
+        error.WithFailed,
+        => |known| known,
+        else => error.WrongType,
+    };
 }
