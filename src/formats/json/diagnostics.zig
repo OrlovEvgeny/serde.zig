@@ -122,7 +122,7 @@ pub const DeserializerWithDiagnostics = struct {
         return @errorCast(err);
     }
     pub fn raiseError(self: *Self, err: anyerror) Error {
-        return self.fail(err, null);
+        return self.fail(self.inner.raiseError(err), null);
     }
     pub fn finish(self: *Self) Error!void {
         self.start();

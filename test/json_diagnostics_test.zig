@@ -180,3 +180,33 @@ test "diagnostics missing union discriminator and content" {
     try expectFailure(Adjacent, "{\"kind\":\"item\"}", error.MissingField, "/data", 14);
     try expectFailure(Internal, "{\"kind\":\"item\",\"kind\":\"item\"}", error.DuplicateField, "/kind", 15);
 }
+
+test "diagnostics preserve custom error normalization and parse options" {
+    const Failing = struct {
+        pub fn zerdeDeserialize(comptime _: type, _: std.mem.Allocator, d: anytype) @TypeOf(d.*).Error!@This() {
+            return d.raiseError(error.CustomFailure);
+        }
+    };
+    try expectFailure(Failing, "null", error.WrongType, "", 0);
+    var buffer: [16]u8 = undefined;
+    var diagnostics = serde.json.Diagnostics.init(&buffer);
+    var parsed = try serde.json.fromSliceManagedWithDiagnostics(u8, A, "null", .{ .lenient_null_to_zero = true }, &diagnostics);
+    defer parsed.deinit();
+    try testing.expectEqual(@as(u8, 0), parsed.value);
+    try testing.expectError(error.MaxDepthExceeded, serde.json.fromSliceManagedWithDiagnostics([]const []const u16, A, "[[1]]", .{ .max_depth = 1 }, &diagnostics));
+    try testing.expectEqualStrings("/0", diagnostics.path);
+    // Failed alternatives may overwrite the suffix but must retain the union prefix.
+    const U = union(enum) {
+        first: struct { very_long_field_name: bool },
+        second: struct { v: u8 },
+        pub const serde = .{ .tag = .untagged };
+    };
+    for (0..buffer.len) |size| {
+        diagnostics = serde.json.Diagnostics.init(buffer[0..size]);
+        var result = try serde.json.fromSliceManagedWithDiagnostics(struct { u: U }, A, "{\"u\":{\"v\":1}}", .{}, &diagnostics);
+        defer result.deinit();
+        try testing.expectEqual(@as(u8, 1), result.value.u.second.v);
+        try testing.expectEqual(null, diagnostics.original_error);
+        try testing.expect(!diagnostics.path_truncated);
+    }
+}
