@@ -805,15 +805,19 @@ fn opJsonWriterCpu(_: Allocator) !usize {
     return writer.end;
 }
 
+// The CI harness also runs against older library revisions without diagnostics.
+const diagnostic_benchmarks = if (@hasDecl(serde.json, "DeserializerWithDiagnostics")) [_]Benchmark{
+    .{ .id = "json.wide64.deserialize.diagnostics.cpu", .format = "json", .case_name = "wide64", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = wide64_json.len, .key_case = false, .run = cpuParse(Wide64, wide64_json, DiagnosticJson) },
+    .{ .id = "json.nested.deserialize.diagnostics.cpu", .format = "json", .case_name = "nested", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = (nested_json).len, .key_case = false, .run = cpuParse(Nested, nested_json, DiagnosticJson) },
+    .{ .id = "json.array_struct.deserialize.diagnostics.cpu", .format = "json", .case_name = "array_struct", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = (rows_json).len, .key_case = false, .run = cpuParse([]const Row, rows_json, DiagnosticJson) },
+} else [_]Benchmark{};
+
 const benchmarks = [_]Benchmark{
     .{ .id = "json.wide64.deserialize.serde.cpu", .format = "json", .case_name = "wide64", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = wide64_json.len, .key_case = true, .run = cpuParse(Wide64, wide64_json, serde.json) },
-    .{ .id = "json.wide64.deserialize.diagnostics.cpu", .format = "json", .case_name = "wide64", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = wide64_json.len, .key_case = false, .run = cpuParse(Wide64, wide64_json, DiagnosticJson) },
     .{ .id = "json.wide.deserialize.serde.cpu", .format = "json", .case_name = "wide", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = (wide_json).len, .key_case = true, .run = cpuParse(Wide, wide_json, serde.json) },
     .{ .id = "json.wide_shuffled_alias.deserialize.serde.cpu", .format = "json", .case_name = "wide_shuffled_alias", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = (wide_shuffled_json).len, .key_case = true, .run = cpuParse(Wide, wide_shuffled_json, serde.json) },
     .{ .id = "json.nested.deserialize.serde.cpu", .format = "json", .case_name = "nested", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = (nested_json).len, .key_case = true, .run = cpuParse(Nested, nested_json, serde.json) },
-    .{ .id = "json.nested.deserialize.diagnostics.cpu", .format = "json", .case_name = "nested", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = (nested_json).len, .key_case = false, .run = cpuParse(Nested, nested_json, DiagnosticJson) },
     .{ .id = "json.array_struct.deserialize.serde.cpu", .format = "json", .case_name = "array_struct", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = (rows_json).len, .key_case = true, .run = cpuParse([]const Row, rows_json, serde.json) },
-    .{ .id = "json.array_struct.deserialize.diagnostics.cpu", .format = "json", .case_name = "array_struct", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = (rows_json).len, .key_case = false, .run = cpuParse([]const Row, rows_json, DiagnosticJson) },
     .{ .id = "json.long_plain.serialize.serde.cpu", .format = "json", .case_name = "long_plain", .operation = "serialize", .implementation = "serde", .mode = .cpu, .input_bytes = 16384, .key_case = true, .run = cpuStringSerialize((&long_plain_json)[9 .. long_plain_json.len - 2]) },
     .{ .id = "json.long_sparse_escaped.serialize.serde.cpu", .format = "json", .case_name = "long_sparse_escaped", .operation = "serialize", .implementation = "serde", .mode = .cpu, .input_bytes = 16512, .key_case = true, .run = cpuStringSerialize(&long_sparse_text) },
     .{ .id = "json.long_plain.deserialize.serde.cpu", .format = "json", .case_name = "long_plain", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = (&long_plain_json).len, .key_case = true, .run = cpuParse(StringDocument, &long_plain_json, serde.json) },
@@ -871,7 +875,7 @@ const benchmarks = [_]Benchmark{
     .{ .id = "ndjson.large.serialize.serde.warm", .format = "ndjson", .case_name = "large_ndjson", .operation = "serialize", .implementation = "serde", .mode = .warm, .input_bytes = large_ndjson.len, .run = opNdjsonLargeSerialize },
     .{ .id = "ndjson.large.deserialize.serde.warm", .format = "ndjson", .case_name = "large_ndjson", .operation = "deserialize", .implementation = "serde", .mode = .warm, .input_bytes = large_ndjson.len, .key_case = true, .run = opNdjsonLargeDeserialize },
     .{ .id = "ndjson.large.deserialize.serde.cold", .format = "ndjson", .case_name = "large_ndjson", .operation = "deserialize", .implementation = "serde", .mode = .cold, .input_bytes = large_ndjson.len, .key_case = true, .run = opNdjsonLargeDeserialize },
-};
+} ++ diagnostic_benchmarks;
 
 fn renderText(allocator: Allocator, results: []const BenchResult) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);
