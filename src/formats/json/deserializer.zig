@@ -38,6 +38,18 @@ pub const Options = struct {
 };
 
 pub const Deserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const Deserializer) ?[]const u8 {
+            return if (self.borrow_strings) self.scanner.input else null;
+        }
+        pub fn checkpoint(self: *const Deserializer) Deserializer {
+            return self.*;
+        }
+        pub fn restore(self: *Deserializer, saved: Deserializer) void {
+            self.* = saved;
+        }
+    };
+
     scanner: Scanner,
     borrow_strings: bool = false,
     options: Options = .{},
@@ -168,6 +180,11 @@ pub const Deserializer = struct {
     }
 
     pub fn deserializeUnion(self: *Deserializer, comptime T: type, allocator: Allocator) Error!T {
+        return self.deserializeUnionContext(T, allocator, self);
+    }
+
+    /// Shared union parser; context receives recursive payloads and optional key context.
+    pub fn deserializeUnionContext(self: *Deserializer, comptime T: type, allocator: Allocator, context: anytype) Error!T {
         const fields = reflect.unionFields(T);
         const tok = try self.scanner.peek();
         if (tok == .string) {
@@ -188,18 +205,20 @@ pub const Deserializer = struct {
         if (key_tok != .string) return error.WrongType;
         const decoded_variant = try enumName(std.meta.Tag(T), key_tok.string, self.scanner.last_string_has_escape, self.borrow_strings);
         const variant_name = decoded_variant.slice();
+        const C = @TypeOf(context.*);
+        if (comptime @hasDecl(C, "serde_protocol") and @hasDecl(C.serde_protocol, "unionVariant"))
+            C.serde_protocol.unionVariant(context, variant_name);
         try self.scanner.expectColon();
 
         inline for (fields) |field| {
             if (std.mem.eql(u8, variant_name, field.name)) {
                 if (field.type == void) {
-                    const val_tok = try self.scanner.next();
-                    if (val_tok != .null_lit) return error.WrongType;
+                    try context.deserializeVoid();
                     const close = try self.scanner.next();
                     if (close != .object_end) return error.UnexpectedToken;
                     return @unionInit(T, field.name, {});
                 } else {
-                    const payload = try core_deserialize.deserialize(field.type, allocator, self, .{});
+                    const payload = try core_deserialize.deserialize(field.type, allocator, context, .{});
                     errdefer core_deserialize.ownership.free(field.type, payload, allocator, {}, core_deserialize.ownership.borrowedInput(self));
                     const close = try self.scanner.next();
                     if (close != .object_end) return error.UnexpectedToken;
@@ -263,6 +282,12 @@ pub const Deserializer = struct {
 };
 
 pub const MapAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const MapAccess) ?[]const u8 {
+            return if (self.borrow_strings) self.scanner.input else null;
+        }
+    };
+
     scanner: *Scanner,
     borrow_strings: bool = false,
     options: Options = .{},
@@ -320,6 +345,15 @@ pub const MapAccess = struct {
 };
 
 pub const SeqAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const SeqAccess) ?[]const u8 {
+            return if (self.borrow_strings) self.scanner.input else null;
+        }
+        pub fn sizeHint(_: *const SeqAccess) ?usize {
+            return null;
+        }
+    };
+
     scanner: *Scanner,
     borrow_strings: bool = false,
     options: Options = .{},

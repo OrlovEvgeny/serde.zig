@@ -265,6 +265,17 @@ const Wide64 = struct {
 const wide64_json = "{\"field_000\":0,\"field_001\":1,\"field_002\":2,\"field_003\":3,\"field_004\":4,\"field_005\":5,\"field_006\":6,\"field_007\":7,\"field_008\":8,\"field_009\":9,\"field_010\":10,\"field_011\":11,\"field_012\":12,\"field_013\":13,\"field_014\":14,\"field_015\":15,\"field_016\":16,\"field_017\":17,\"field_018\":18,\"field_019\":19,\"field_020\":20,\"field_021\":21,\"field_022\":22,\"field_023\":23,\"field_024\":24,\"field_025\":25,\"field_026\":26,\"field_027\":27,\"field_028\":28,\"field_029\":29,\"field_030\":30,\"field_031\":31,\"field_032\":32,\"field_033\":33,\"field_034\":34,\"field_035\":35,\"field_036\":36,\"field_037\":37,\"field_038\":38,\"field_039\":39,\"field_040\":40,\"field_041\":41,\"field_042\":42,\"field_043\":43,\"field_044\":44,\"field_045\":45,\"field_046\":46,\"field_047\":47,\"field_048\":48,\"field_049\":49,\"field_050\":50,\"field_051\":51,\"field_052\":52,\"field_053\":53,\"field_054\":54,\"field_055\":55,\"field_056\":56,\"field_057\":57,\"field_058\":58,\"field_059\":59,\"field_060\":60,\"field_061\":61,\"field_062\":62,\"field_063\":63}";
 const wide_json = "{\"f0\":0,\"f1\":1,\"f2\":2,\"f3\":3,\"f4\":4,\"f5\":5,\"f6\":6,\"f7\":7,\"f8\":8,\"f9\":9,\"f10\":10,\"f11\":11,\"f12\":12,\"f13\":13,\"f14\":14,\"f15\":15,\"f16\":16,\"f17\":17,\"f18\":18,\"f19\":19,\"f20\":20,\"f21\":21,\"f22\":22,\"f23\":23}";
 const wide_shuffled_json = "{\"f23\":23,\"f22\":22,\"f21\":21,\"f20\":20,\"f19\":19,\"f18\":18,\"f17\":17,\"f16\":16,\"f15\":15,\"f14\":14,\"f13\":13,\"f12\":12,\"f11\":11,\"f10\":10,\"f9\":9,\"f8\":8,\"f7\":7,\"f6\":6,\"f5\":5,\"f4\":4,\"f3\":3,\"f2\":2,\"f1\":1,\"zero\":0}";
+const DiagnosticJson = struct {
+    pub fn fromSlice(comptime T: type, allocator: Allocator, input: []const u8) !T {
+        var buffer: [256]u8 = undefined;
+        var diagnostics = serde.json.Diagnostics.init(&buffer);
+        var d = serde.json.DeserializerWithDiagnostics.init(input, .{}, &diagnostics);
+        const value = try serde.deserialize(T, allocator, &d, .{});
+        errdefer serde.core.freeAllocated(T, value, allocator);
+        try d.finish();
+        return value;
+    }
+};
 fn cpuParse(comptime T: type, comptime input: []const u8, comptime Format: type) BenchFn {
     return struct {
         fn run(_: Allocator) !usize {
@@ -794,6 +805,13 @@ fn opJsonWriterCpu(_: Allocator) !usize {
     return writer.end;
 }
 
+// The CI harness also runs against older library revisions without diagnostics.
+const diagnostic_benchmarks = if (@hasDecl(serde.json, "DeserializerWithDiagnostics")) [_]Benchmark{
+    .{ .id = "json.wide64.deserialize.diagnostics.cpu", .format = "json", .case_name = "wide64", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = wide64_json.len, .key_case = false, .run = cpuParse(Wide64, wide64_json, DiagnosticJson) },
+    .{ .id = "json.nested.deserialize.diagnostics.cpu", .format = "json", .case_name = "nested", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = (nested_json).len, .key_case = false, .run = cpuParse(Nested, nested_json, DiagnosticJson) },
+    .{ .id = "json.array_struct.deserialize.diagnostics.cpu", .format = "json", .case_name = "array_struct", .operation = "deserialize", .implementation = "diagnostics", .mode = .cpu, .input_bytes = (rows_json).len, .key_case = false, .run = cpuParse([]const Row, rows_json, DiagnosticJson) },
+} else [_]Benchmark{};
+
 const benchmarks = [_]Benchmark{
     .{ .id = "json.wide64.deserialize.serde.cpu", .format = "json", .case_name = "wide64", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = wide64_json.len, .key_case = true, .run = cpuParse(Wide64, wide64_json, serde.json) },
     .{ .id = "json.wide.deserialize.serde.cpu", .format = "json", .case_name = "wide", .operation = "deserialize", .implementation = "serde", .mode = .cpu, .input_bytes = (wide_json).len, .key_case = true, .run = cpuParse(Wide, wide_json, serde.json) },
@@ -857,7 +875,7 @@ const benchmarks = [_]Benchmark{
     .{ .id = "ndjson.large.serialize.serde.warm", .format = "ndjson", .case_name = "large_ndjson", .operation = "serialize", .implementation = "serde", .mode = .warm, .input_bytes = large_ndjson.len, .run = opNdjsonLargeSerialize },
     .{ .id = "ndjson.large.deserialize.serde.warm", .format = "ndjson", .case_name = "large_ndjson", .operation = "deserialize", .implementation = "serde", .mode = .warm, .input_bytes = large_ndjson.len, .key_case = true, .run = opNdjsonLargeDeserialize },
     .{ .id = "ndjson.large.deserialize.serde.cold", .format = "ndjson", .case_name = "large_ndjson", .operation = "deserialize", .implementation = "serde", .mode = .cold, .input_bytes = large_ndjson.len, .key_case = true, .run = opNdjsonLargeDeserialize },
-};
+} ++ diagnostic_benchmarks;
 
 fn renderText(allocator: Allocator, results: []const BenchResult) ![]u8 {
     var aw: compat.Io.Writer.Allocating = .init(allocator);

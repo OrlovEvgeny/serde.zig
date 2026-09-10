@@ -57,6 +57,9 @@ pub fn build(b: *std.Build) void {
     // Additional test suites.
     const extra_test_sources = [_][]const u8{
         "test/core_regressions_test.zig",
+        "test/contracts_test.zig",
+        "test/json_diagnostics_test.zig",
+        "test/tokens_test.zig",
         "test/stress_test.zig",
         "test/edge_cases_test.zig",
         "test/adversarial_test.zig",
@@ -196,6 +199,7 @@ pub fn build(b: *std.Build) void {
     const examples_step = b.step("examples", "Build all examples");
 
     const example_sources = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "example-managed-json", .src = "examples/managed_json/main.zig" },
         .{ .name = "example-basic-json", .src = "examples/basic_json/main.zig" },
         .{ .name = "example-config-toml", .src = "examples/config_toml/main.zig" },
         .{ .name = "example-custom-types", .src = "examples/custom_types/main.zig" },

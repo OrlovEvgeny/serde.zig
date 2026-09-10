@@ -22,6 +22,18 @@ pub const DeserializeError = error{
 };
 
 pub const Deserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const Deserializer) ?[]const u8 {
+            return null;
+        }
+        pub fn checkpoint(self: *const Deserializer) Deserializer {
+            return self.*;
+        }
+        pub fn restore(self: *Deserializer, saved: Deserializer) void {
+            self.* = saved;
+        }
+    };
+
     table: *const Table,
 
     pub const Error = DeserializeError;
@@ -80,6 +92,12 @@ pub const Deserializer = struct {
 };
 
 pub const MapAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const MapAccess) ?[]const u8 {
+            return null;
+        }
+    };
+
     table: *const Table,
     iter: Table.Iterator,
 
@@ -111,6 +129,15 @@ pub const MapAccess = struct {
 };
 
 pub const SeqAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const SeqAccess) ?[]const u8 {
+            return null;
+        }
+        pub fn sizeHint(self: *const SeqAccess) ?usize {
+            return self.items.len - self.pos;
+        }
+    };
+
     items: []const Value,
     pos: usize,
 
@@ -170,6 +197,18 @@ fn deserializeUnionFromTable(table: *const Table, comptime T: type, allocator: A
 
 // Wraps a single Value to provide the Deserializer interface for custom deserializers.
 const ValueDeserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const ValueDeserializer) ?[]const u8 {
+            return null;
+        }
+        pub fn checkpoint(self: *const ValueDeserializer) ValueDeserializer {
+            return self.*;
+        }
+        pub fn restore(self: *ValueDeserializer, saved: ValueDeserializer) void {
+            self.* = saved;
+        }
+    };
+
     val: *const Value,
 
     pub const Error = DeserializeError;

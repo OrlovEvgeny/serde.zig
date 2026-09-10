@@ -1,5 +1,5 @@
 /// Comptime verification of Serializer and Deserializer interfaces.
-/// Whether S implements the full Serializer interface.
+/// Historical declaration-only serializer check; use assertSerializer for strict probes.
 pub fn isSerializer(comptime S: type) bool {
     return @hasDecl(S, "serializeBool") and
         @hasDecl(S, "serializeInt") and
@@ -37,7 +37,7 @@ pub fn hasKnownLengthContainers(comptime S: type) bool {
     return has_array;
 }
 
-/// Whether D implements the full Deserializer interface.
+/// Historical declaration-only deserializer check; use assertDeserializer for strict probes.
 pub fn isDeserializer(comptime D: type) bool {
     return @hasDecl(D, "deserializeBool") and
         @hasDecl(D, "deserializeInt") and
@@ -47,4 +47,145 @@ pub fn isDeserializer(comptime D: type) bool {
         @hasDecl(D, "deserializeStruct") and
         @hasDecl(D, "deserializeSeq") and
         @hasDecl(D, "deserializeEnum");
+}
+
+fn require(comptime T: type, comptime name: []const u8) void {
+    if (@typeInfo(T) != .@"struct" and @typeInfo(T) != .@"union")
+        @compileError(@typeName(T) ++ ": expected a serde backend/container type");
+    if (!@hasDecl(T, name)) @compileError(@typeName(T) ++ ": missing serde method " ++ name);
+    if (@typeInfo(@TypeOf(@field(T, name))) != .@"fn")
+        @compileError(@typeName(T) ++ "." ++ name ++ ": expected a function");
+}
+fn requireError(comptime T: type) void {
+    if (@typeInfo(T) != .@"struct" and @typeInfo(T) != .@"union")
+        @compileError(@typeName(T) ++ ": expected a serde backend/container type");
+    if (!@hasDecl(T, "Error")) @compileError(@typeName(T) ++ ": missing serde Error declaration");
+    if (@TypeOf(T.Error) != type or @typeInfo(T.Error) != .error_set) @compileError(@typeName(T) ++ ".Error must be an error set");
+}
+fn payload(comptime T: type) type {
+    if (@typeInfo(T) != .error_union) @compileError("serde methods must return an error union");
+    return @import("protocol.zig").Backend(@typeInfo(T).error_union.payload);
+}
+
+/// Opt-in structural validation. This does not prove format semantics or supported types.
+pub fn assertSerializer(comptime S: type) void {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        checkSerializer(S, .{});
+    }
+}
+fn checkSerializer(comptime S: type, comptime visited: anytype) void {
+    inline for (visited) |V| if (S == V) return;
+    requireError(S);
+    inline for (.{ "serializeBool", "serializeInt", "serializeFloat", "serializeString", "serializeNull", "serializeVoid", "beginArray", "beginStruct" }) |name| require(S, name);
+    const A = payload(@TypeOf(@as(*S, undefined).beginArray()));
+    require(A, "end");
+    checkSerializer(A, visited ++ .{S});
+    checkStructContainer(payload(@TypeOf(@as(*S, undefined).beginStruct())));
+    const s: *S = undefined;
+    checkResult(S, "serializeBool", @TypeOf(s.serializeBool(true)), void);
+    checkResult(S, "serializeInt", @TypeOf(s.serializeInt(@as(i32, 1))), void);
+    checkResult(S, "serializeFloat", @TypeOf(s.serializeFloat(@as(f64, 1))), void);
+    checkResult(S, "serializeString", @TypeOf(s.serializeString("")), void);
+    checkResult(S, "serializeNull", @TypeOf(s.serializeNull()), void);
+    checkResult(S, "serializeVoid", @TypeOf(s.serializeVoid()), void);
+    checkResult(A, "end", @TypeOf(@as(*A, undefined).end()), void);
+    if (hasKnownLengthContainers(S)) {
+        const AL = payload(@TypeOf(@as(*S, undefined).beginArrayLen(0)));
+        requireError(AL);
+        require(AL, "end");
+        checkResult(AL, "end", @TypeOf(@as(*AL, undefined).end()), void);
+        checkSerializer(AL, visited ++ .{S});
+        checkStructContainer(payload(@TypeOf(@as(*S, undefined).beginStructLen(0))));
+    }
+}
+fn checkStructContainer(comptime M: type) void {
+    requireError(M);
+    inline for (.{ "serializeField", "serializeEntry", "end" }) |name| require(M, name);
+    const m: *M = undefined;
+    checkResult(M, "serializeField", @TypeOf(m.serializeField("key", true)), void);
+    checkResult(M, "serializeEntry", @TypeOf(m.serializeEntry(@as([]const u8, "key"), true)), void);
+    checkResult(M, "end", @TypeOf(m.end()), void);
+}
+
+/// Validate the full core deserializer contract. Restricted backends can return
+/// Error!void for unsupported container profiles; these are not full backends.
+pub fn assertDeserializer(comptime D: type) void {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        requireError(D);
+        for (.{ "deserializeBool", "deserializeInt", "deserializeFloat", "deserializeString", "deserializeVoid", "deserializeOptional", "deserializeStruct", "deserializeSeqAccess", "deserializeEnum", "deserializeUnion", "raiseError" }) |name| require(D, name);
+        const M = payload(@TypeOf(@as(*D, undefined).deserializeStruct(struct {})));
+        requireError(M);
+        for (.{ "nextKey", "nextValue", "skipValue", "raiseError" }) |name| require(M, name);
+        const A = payload(@TypeOf(@as(*D, undefined).deserializeSeqAccess()));
+        requireError(A);
+        require(A, "nextElement");
+        const d: *D = undefined;
+        const allocator: @import("std").mem.Allocator = undefined;
+        checkResult(D, "deserializeBool", @TypeOf(d.deserializeBool()), bool);
+        checkResult(D, "deserializeInt", @TypeOf(d.deserializeInt(i32)), i32);
+        checkResult(D, "deserializeFloat", @TypeOf(d.deserializeFloat(f64)), f64);
+        checkResult(D, "deserializeString", @TypeOf(d.deserializeString(allocator)), []const u8);
+        checkResult(D, "deserializeVoid", @TypeOf(d.deserializeVoid()), void);
+        checkResult(D, "deserializeOptional", @TypeOf(d.deserializeOptional(i32, allocator)), ?i32);
+        const E = enum { item };
+        const U = union(enum) { item: i32 };
+        checkResult(D, "deserializeEnum", @TypeOf(d.deserializeEnum(E)), E);
+        checkResult(D, "deserializeUnion", @TypeOf(d.deserializeUnion(U, allocator)), U);
+        checkResult(M, "nextKey", @TypeOf(@as(*M, undefined).nextKey(allocator)), ?[]const u8);
+        checkResult(M, "nextValue", @TypeOf(@as(*M, undefined).nextValue(i32, allocator)), i32);
+        checkResult(M, "skipValue", @TypeOf(@as(*M, undefined).skipValue()), void);
+        checkResult(A, "nextElement", @TypeOf(@as(*A, undefined).nextElement(i32, allocator)), ?i32);
+        if (@TypeOf(d.raiseError(error.MissingField)) != D.Error or @TypeOf(@as(*M, undefined).raiseError(error.MissingField)) != M.Error)
+            @compileError("serde raiseError must return the backend Error set");
+        if (@hasDecl(D, "serde_protocol")) {
+            const P = D.serde_protocol;
+            if (@hasDecl(P, "checkpoint") != @hasDecl(P, "restore"))
+                @compileError(@typeName(D) ++ ": declare both serde_protocol.checkpoint and serde_protocol.restore");
+        }
+    }
+}
+
+fn errorNames(comptime E: type) ?[]const [:0]const u8 {
+    const info = @typeInfo(E).error_set;
+    // Newer Zig master exposes names directly in a struct instead of a slice.
+    if (@typeInfo(@TypeOf(info)) == .@"struct") return info.error_names;
+    const errors = info orelse return null;
+    comptime var names: [errors.len][:0]const u8 = undefined;
+    inline for (errors, 0..) |err, i| names[i] = err.name;
+    const result = names;
+    return &result;
+}
+
+fn checkResult(comptime Owner: type, comptime method: []const u8, comptime Result: type, comptime Expected: type) void {
+    if (@typeInfo(Result) != .error_union or @typeInfo(Result).error_union.payload != Expected)
+        @compileError(@typeName(Owner) ++ "." ++ method ++ ": expected an error union with payload " ++ @typeName(Expected));
+    comptime {
+        const declared = errorNames(Owner.Error) orelse return;
+        const returned = errorNames(@typeInfo(Result).error_union.error_set) orelse
+            @compileError(@typeName(Owner) ++ "." ++ method ++ ": returned errors exceed the declared Error set");
+        for (returned) |err| {
+            var found = false;
+            for (declared) |allowed| {
+                if (@import("std").mem.eql(u8, err, allowed)) found = true;
+            }
+            if (!found) @compileError(@typeName(Owner) ++ "." ++ method ++ ": returned error " ++ err ++ " is missing from Error");
+        }
+    }
+}
+
+test "method errors may be a subset of the declared set" {
+    const Restricted = struct {
+        pub const Error = error{ First, Second };
+    };
+    const Unrestricted = struct {
+        pub const Error = anyerror;
+    };
+    comptime {
+        checkResult(Restricted, "probe", error{First}!void, void);
+        checkResult(Restricted, "probe", error{}!void, void);
+        checkResult(Unrestricted, "probe", Restricted.Error!void, void);
+        checkResult(Unrestricted, "probe", anyerror!void, void);
+    }
 }

@@ -23,6 +23,18 @@ pub const DeserializeError = error{
 };
 
 pub const Deserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const Deserializer) ?[]const u8 {
+            return if (self.borrow_strings) self.scanner.input else null;
+        }
+        pub fn checkpoint(self: *const Deserializer) Deserializer {
+            return self.*;
+        }
+        pub fn restore(self: *Deserializer, saved: Deserializer) void {
+            self.* = saved;
+        }
+    };
+
     scanner: Scanner,
     borrow_strings: bool = false,
 
@@ -234,6 +246,12 @@ pub const Deserializer = struct {
 };
 
 pub const MapAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const MapAccess) ?[]const u8 {
+            return if (self.borrow_strings) self.scanner.input else null;
+        }
+    };
+
     scanner: *Scanner,
     borrow_strings: bool = false,
     phase: Phase = .attributes,
@@ -361,6 +379,15 @@ pub const MapAccess = struct {
 };
 
 pub const SeqAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const SeqAccess) ?[]const u8 {
+            return if (self.borrow_strings) self.scanner.input else null;
+        }
+        pub fn sizeHint(_: *const SeqAccess) ?usize {
+            return null;
+        }
+    };
+
     scanner: *Scanner,
     borrow_strings: bool = false,
 

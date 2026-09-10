@@ -12,6 +12,9 @@ Compatibility section of the README.
 git clone https://github.com/OrlovEvgeny/serde.zig.git
 cd serde.zig
 zig build test
+zig build examples fuzz docs
+python3 test/check_compile_errors.py
+python3 test/check_package.py
 ```
 
 The repository also includes [mise](https://mise.jdx.dev/) configs for the
@@ -72,7 +75,10 @@ Each format lives in `src/formats/<name>/` and must provide:
 - `serializer.zig` — a type implementing the `Serializer` interface from `src/core/interface.zig`
 - `deserializer.zig` — a type implementing the `Deserializer` interface
 
-Both interfaces are verified at comptime by `isSerializer` / `isDeserializer` in `src/core/interface.zig`.
+Use the public opt-in `serde.core.assertSerializer` / `assertDeserializer` probes
+for full interfaces. The historical predicates check only a subset of declarations.
+Restricted format profiles need supported-shape tests. See the
+[extension contract](docs/extension-contract.md) and [format author guide](docs/format-author.md).
 
 Length-prefixed formats may additionally declare `beginArrayLen` / `beginStructLen`.
 The core calls them instead of `beginArray` / `beginStruct` whenever the element

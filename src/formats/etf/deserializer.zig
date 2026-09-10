@@ -22,6 +22,18 @@ pub const DeserializeError = codec.DecodeError || error{
 /// Direct typed ETF decoder. It consumes the shared wire representation
 /// without first allocating a dynamic `Term` tree.
 pub const Deserializer = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(_: *const Deserializer) ?[]const u8 {
+            return null;
+        }
+        pub fn checkpoint(self: *const Deserializer) Deserializer {
+            return self.*;
+        }
+        pub fn restore(self: *Deserializer, saved: Deserializer) void {
+            self.* = saved;
+        }
+    };
+
     input: []const u8,
     pos: usize = 0,
     depth: usize = 0,
@@ -459,6 +471,12 @@ pub const Deserializer = struct {
 };
 
 pub const MapAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const MapAccess) ?[]const u8 {
+            return Deserializer.serde_protocol.borrowedInput(self.parent);
+        }
+    };
+
     parent: *Deserializer,
     remaining: usize,
     key_buffer: [atom_buffer_len]u8 = undefined,
@@ -509,6 +527,15 @@ pub const MapAccess = struct {
 };
 
 pub const SeqAccess = struct {
+    pub const serde_protocol = struct {
+        pub fn borrowedInput(self: *const SeqAccess) ?[]const u8 {
+            return Deserializer.serde_protocol.borrowedInput(self.parent);
+        }
+        pub fn sizeHint(self: *const SeqAccess) ?usize {
+            return self.remaining;
+        }
+    };
+
     parent: *Deserializer,
     remaining: usize,
     tail_consumed: bool = false,

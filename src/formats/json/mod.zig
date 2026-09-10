@@ -1466,3 +1466,20 @@ test "OOB: no match falls through to default behavior" {
     try testing.expectEqual(@as(i32, 1), result.x);
     try testing.expectEqual(@as(i32, 2), result.y);
 }
+
+/// Allocation-free diagnostic context; the caller owns its path buffer.
+pub const Diagnostics = @import("diagnostics.zig").Diagnostics;
+pub const DiagnosticCategory = @import("diagnostics.zig").Category;
+pub const DeserializerWithDiagnostics = @import("diagnostics.zig").DeserializerWithDiagnostics;
+
+/// Managed parsing with optional JSON pointer and source location on failure.
+pub fn fromSliceManagedWithDiagnostics(comptime T: type, allocator: std.mem.Allocator, input: []const u8, options: DeserializeOptions, diagnostics: *Diagnostics) !@import("../../core/parsed.zig").Parsed(T) {
+    var d = DeserializerWithDiagnostics.init(input, options, diagnostics);
+    const arena = allocator.create(std.heap.ArenaAllocator) catch |err| return d.raiseError(err);
+    errdefer allocator.destroy(arena);
+    arena.* = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const value = try core_deserialize.deserialize(T, arena.allocator(), &d, .{});
+    try d.finish();
+    return .{ .value = value, .arena = arena };
+}

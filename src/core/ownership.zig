@@ -10,6 +10,10 @@ pub fn borrowedInput(d: anytype) ?[]const u8 {
         .pointer => |p| p.child,
         else => @TypeOf(d),
     };
+    if (@hasDecl(D, "serde_protocol")) {
+        if (@hasDecl(D.serde_protocol, "borrowedInput")) return D.serde_protocol.borrowedInput(d);
+        return null;
+    }
     if (@hasField(D, "borrow_strings")) {
         if (d.borrow_strings) {
             if (@hasField(D, "scanner")) return d.scanner.input;
@@ -67,4 +71,9 @@ fn freeDefault(comptime T: type, value: T, allocator: Allocator, comptime schema
         },
         else => {},
     }
+}
+
+/// Release a string returned by a backend, retaining views into borrowed input.
+pub fn releaseString(deserializer: anytype, allocator: Allocator, value: []const u8) void {
+    free([]const u8, value, allocator, {}, borrowedInput(deserializer));
 }

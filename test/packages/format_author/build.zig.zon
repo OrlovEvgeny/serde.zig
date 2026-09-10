@@ -1,0 +1,8 @@
+.{
+    .name = .format_author,
+    .version = "0.0.0",
+    .fingerprint = 0xc3013e32e42e057b,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{ .serde = .{ .path = "../../.." } },
+    .paths = .{ "build.zig", "build.zig.zon", "main.zig", "format.zig" },
+}

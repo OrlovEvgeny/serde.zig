@@ -1,0 +1,49 @@
+{
+  "baseline": "ee70701",
+  "zig_version": "0.16.0",
+  "target": "aarch64-macos",
+  "results": [
+    {
+      "id": "json.nested.serialize.serde.warm",
+      "repeat": 1,
+      "baseline_ns_per_op": 195.452,
+      "current_ns_per_op": 194.858,
+      "change_percent": -0.304
+    },
+    {
+      "id": "json.nested.serialize.serde.warm",
+      "repeat": 2,
+      "baseline_ns_per_op": 193.877,
+      "current_ns_per_op": 196.175,
+      "change_percent": 1.185
+    },
+    {
+      "id": "json.nested.serialize.serde.warm",
+      "repeat": 3,
+      "baseline_ns_per_op": 195.888,
+      "current_ns_per_op": 195.408,
+      "change_percent": -0.245
+    },
+    {
+      "id": "json.wide64.deserialize.serde.cpu",
+      "repeat": 1,
+      "baseline_ns_per_op": 1334.482,
+      "current_ns_per_op": 1521.784,
+      "change_percent": 14.036
+    },
+    {
+      "id": "json.wide64.deserialize.serde.cpu",
+      "repeat": 2,
+      "baseline_ns_per_op": 1369.694,
+      "current_ns_per_op": 1431.776,
+      "change_percent": 4.533
+    },
+    {
+      "id": "json.wide64.deserialize.serde.cpu",
+      "repeat": 3,
+      "baseline_ns_per_op": 1381.331,
+      "current_ns_per_op": 1422.748,
+      "change_percent": 2.998
+    }
+  ]
+}
