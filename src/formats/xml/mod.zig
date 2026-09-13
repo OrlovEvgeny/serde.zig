@@ -362,15 +362,7 @@ fn initStructDefaults(comptime T: type, comptime schema: anytype) !T {
 }
 
 fn readAll(allocator: std.mem.Allocator, reader: *compat.Io.Reader) ![]u8 {
-    var buf: std.ArrayList(u8) = .empty;
-    errdefer buf.deinit(allocator);
-    while (true) {
-        const chunk = buf.addManyAsSlice(allocator, 4096) catch return error.OutOfMemory;
-        const n = reader.read(chunk) catch return error.OutOfMemory;
-        buf.shrinkRetainingCapacity(buf.items.len - chunk.len + n);
-        if (n == 0) break;
-    }
-    return buf.toOwnedSlice(allocator) catch return error.OutOfMemory;
+    return reader.allocRemaining(allocator, compat.Io.Limit.limited(10 * 1024 * 1024)) catch return error.ReadFailed;
 }
 
 const testing = std.testing;
@@ -481,6 +473,14 @@ test "serialize void field" {
 test "deserialize simple struct" {
     const Point = struct { x: i32, y: i32 };
     const point = try fromSlice(Point, testing.allocator, "<Point><x>10</x><y>20</y></Point>");
+    try testing.expectEqual(@as(i32, 10), point.x);
+    try testing.expectEqual(@as(i32, 20), point.y);
+}
+
+test "deserialize simple struct using reader" {
+    const Point = struct { x: i32, y: i32 };
+    var reader = compat.Reader.fixed("<Point><x>10</x><y>20</y></Point>");
+    const point = try fromReader(Point, testing.allocator, &reader);
     try testing.expectEqual(@as(i32, 10), point.x);
     try testing.expectEqual(@as(i32, 20), point.y);
 }
