@@ -66,6 +66,7 @@ pub fn build(b: *std.Build) void {
         "test/serde_options_test.zig",
         "test/toon_test.zig",
         "test/etf_test.zig",
+        "test/reader_test.zig",
     };
 
     for (extra_test_sources) |src| {
