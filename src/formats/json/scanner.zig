@@ -180,6 +180,9 @@ pub const Scanner = struct {
                     }
                 }
             },
+            // A container end is not the start of a value. Without this the
+            // scanner reads a lone `]` or `}` as a complete document.
+            .object_end, .array_end => return error.UnexpectedToken,
             else => {}, // scalar token already consumed
         }
     }
@@ -475,4 +478,11 @@ pub fn parseHex4(hex: *const [4]u8) ?u16 {
         result = result * 16 + digit;
     }
     return result;
+}
+
+test "a lone container end is not a value" {
+    for ([_][]const u8{ "]", "}" }) |input| {
+        var s = Scanner{ .input = input };
+        try testing.expectError(error.UnexpectedToken, s.skipValue());
+    }
 }
