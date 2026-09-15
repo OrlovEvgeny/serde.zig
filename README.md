@@ -10,10 +10,10 @@ Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize suppor
 
 ## Quick Start
 
-Add the v1.2.1 dependency:
+Add the v1.2.2 dependency:
 
 ```sh
-zig fetch --save https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.2.1.tar.gz
+zig fetch --save https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.2.2.tar.gz
 ```
 
 In `build.zig`, connect the public module to your executable:
