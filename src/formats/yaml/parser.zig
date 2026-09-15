@@ -655,7 +655,15 @@ const Parser = struct {
                 continue;
             }
 
-            const val = try self.parseFlowValue();
+            const before = self.pos;
+            const val = try self.parseFlowEntry();
+            // `parseFlowValue` stops without consuming anything when it meets a
+            // byte it does not start a value with, so an entry that made no
+            // progress would spin here forever, appending as it went.
+            if (self.pos == before) {
+                val.deinit(self.allocator);
+                return error.InvalidYaml;
+            }
             items.append(self.allocator, val) catch {
                 val.deinit(self.allocator);
                 return error.OutOfMemory;
@@ -663,6 +671,47 @@ const Parser = struct {
         }
 
         return .{ .sequence = items.toOwnedSlice(self.allocator) catch return error.OutOfMemory };
+    }
+
+    /// One entry of a flow sequence. YAML 1.2 §7.4 lets an entry be a single
+    /// `key: value` pair, which denotes a one-entry mapping: `[a: 1]` is
+    /// `[{a: 1}]`. A key this `Value` cannot hold, such as `[[a,b]]: c`, is an
+    /// error rather than a silent empty key.
+    fn parseFlowEntry(self: *Parser) ParseError!Value {
+        const start = self.pos;
+        const val = try self.parseFlowValue();
+        self.skipWhitespaceAndComments();
+        if (self.pos >= self.input.len or self.input[self.pos] != ':') return val;
+        if (self.pos + 1 < self.input.len and !isFlowPairColon(self.input[self.pos + 1])) return val;
+
+        // It is a pair, so re-read the same text as a key.
+        val.deinit(self.allocator);
+        self.pos = start;
+        const key = try self.parseFlowKey();
+        var key_owned = true;
+        defer if (key_owned) self.allocator.free(key);
+        self.skipWhitespaceAndComments();
+        if (self.pos >= self.input.len or self.input[self.pos] != ':') return error.InvalidYaml;
+        self.pos += 1;
+        self.skipWhitespaceAndComments();
+
+        const value = try self.parseFlowValue();
+        var value_owned = true;
+        errdefer if (value_owned) value.deinit(self.allocator);
+
+        var map: Mapping = .empty;
+        errdefer freeMapping(self.allocator, &map);
+        const gop = map.getOrPut(self.allocator, key) catch return error.OutOfMemory;
+        gop.key_ptr.* = key;
+        key_owned = false;
+        gop.value_ptr.* = value;
+        value_owned = false;
+        return .{ .mapping = map };
+    }
+
+    fn isFlowPairColon(next: u8) bool {
+        return next == ' ' or next == '\t' or next == ',' or next == ']' or
+            next == '}' or next == '\n' or next == '\r';
     }
 
     fn parseFlowKey(self: *Parser) ParseError![]const u8 {
@@ -1775,4 +1824,35 @@ test "scalar type resolution" {
     try testing.expectEqualStrings("hello", resolveScalarType("hello", .plain).string);
     // Quoted always string.
     try testing.expectEqualStrings("true", resolveScalarType("true", .single_quoted).string);
+}
+
+test "a flow sequence entry may be a single pair" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const val = try parse(arena.allocator(), "[a: 1, b, c: two]");
+    try testing.expectEqual(@as(usize, 3), val.sequence.len);
+    try testing.expectEqual(@as(i64, 1), val.sequence[0].mapping.get("a").?.integer);
+    try testing.expectEqualStrings("b", val.sequence[1].string);
+    try testing.expectEqualStrings("two", val.sequence[2].mapping.get("c").?.string);
+
+    // A colon not followed by a space or a flow indicator stays in the scalar.
+    const plain = try parse(arena.allocator(), "[a:1]");
+    try testing.expectEqualStrings("a:1", plain.sequence[0].string);
+
+    const empty = try parse(arena.allocator(), "[a: ]");
+    try testing.expectEqual(Value.null_val, empty.sequence[0].mapping.get("a").?);
+}
+
+test "a flow sequence terminates on a key this Value cannot hold" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // These used to loop forever, allocating an entry per turn, because
+    // parseFlowValue returned without consuming the colon.
+    for ([_][]const u8{
+        "[ [a]: 1 ]",
+        "[ [[b,c]]: d ]",
+        "---\n[\n  [ a, [ [[b,c]]: d, e]]: 23\n]\n",
+    }) |input| {
+        try testing.expectError(error.InvalidYaml, parse(arena.allocator(), input));
+    }
 }
