@@ -456,14 +456,17 @@ const Parser = struct {
 
     fn parseUnicodeEscape(self: *Parser, out: *std.ArrayList(u8), comptime len: u8) ParseError!void {
         if (self.pos + len > self.input.len) return error.UnexpectedEof;
-        var cp: u21 = 0;
+        // `\U` carries eight hex digits, so accumulate in u32: the scalar range
+        // does not fit them and a u21 accumulator overflows before the check.
+        var cp: u32 = 0;
         for (0..len) |_| {
             const d = hexDigit(self.input[self.pos]) orelse return error.InvalidUnicode;
             cp = cp * 16 + d;
             self.pos += 1;
         }
+        if (cp > 0x10FFFF) return error.InvalidUnicode;
         var buf: [4]u8 = undefined;
-        const n = std.unicode.utf8Encode(cp, &buf) catch return error.InvalidUnicode;
+        const n = std.unicode.utf8Encode(@intCast(cp), &buf) catch return error.InvalidUnicode;
         out.appendSlice(self.allocator, buf[0..n]) catch return error.OutOfMemory;
     }
 
@@ -1088,4 +1091,20 @@ test "empty table" {
     const t = try parse(arena.allocator(), "[empty]\n");
     const empty = t.get("empty") orelse return error.MissingField;
     try testing.expectEqual(@as(usize, 0), empty.table.count());
+}
+
+test "unicode escape above the scalar range is rejected, not truncated" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    for ([_][]const u8{
+        "a = \"\\UFFFFFFFF\"\n",
+        "a = \"\"\"\\UFFFFFFFF\"\"\"\n",
+        "a = \"\\U00110000\"\n",
+        "a = \"\\UD800FFFF\"\n",
+    }) |input| {
+        try testing.expectError(error.InvalidUnicode, parse(arena.allocator(), input));
+    }
+    const t = try parse(arena.allocator(), "a = \"\\U0001F600\"\nb = \"\\u00e9\"\n");
+    try testing.expectEqualStrings("\u{1F600}", t.get("a").?.string);
+    try testing.expectEqualStrings("\u{00e9}", t.get("b").?.string);
 }
