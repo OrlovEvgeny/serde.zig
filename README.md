@@ -10,10 +10,10 @@ serde.zig uses Zig's comptime reflection (`@typeInfo`) to serialize and deserial
 
 ## Quick start
 
-Add the v1.2.2 dependency:
+Add the v1.2.3 dependency:
 
 ```sh
-zig fetch --save https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.2.2.tar.gz
+zig fetch --save https://github.com/OrlovEvgeny/serde.zig/archive/refs/tags/v1.2.3.tar.gz
 ```
 
 In `build.zig`, connect the public module to your executable:
