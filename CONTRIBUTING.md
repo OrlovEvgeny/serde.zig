@@ -5,7 +5,7 @@ Thank you for your interest in contributing! This document covers the basics.
 ## Development Setup
 
 You need [Zig 0.15.2](https://ziglang.org/download/) or later. CI also runs
-against Zig master, which currently tracks 0.17 development builds; see the
+against Zig master, which currently tracks 0.18 development builds; see the
 Compatibility section of the README.
 
 ```sh
@@ -25,22 +25,26 @@ mise install
 mise -E zig15 install
 mise -E zig16 install
 mise -E zig17 install
+mise -E zig18 install
 
 mise run ci
 mise -E zig15 run ci
 mise -E zig16 run ci
 mise -E zig17 run ci
+mise -E zig18 run ci
 ```
 
-`mise.toml` defaults to Zig 0.16.0. The `zig15`, `zig16`, and `zig17`
-environments select Zig 0.15.2, 0.16.0, and Zig master/0.17-dev explicitly.
+`mise.toml` defaults to Zig 0.17.0. The `zig15`, `zig16`, `zig17`, and `zig18`
+environments select Zig 0.15.2, 0.16.0, 0.17.0, and Zig master/0.18-dev explicitly.
 
 ## Code Style
 
-Run `zig fmt` before committing. The CI enforces formatting.
+Run `zig fmt` from Zig 0.16.0 before committing. The CI enforces formatting.
+Do not format with Zig 0.17 or later: it rewrites `@enumFromInt` and
+`@intFromEnum` to builtins that Zig 0.15 and 0.16 do not have.
 
 ```sh
-zig fmt src/ build.zig
+mise exec zig@0.16.0 -- zig fmt src/ build.zig
 ```
 
 Use `const` by default. Prefer explicit types over `auto`-style inference when it improves readability. Follow the patterns already present in the codebase.

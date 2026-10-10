@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/OrlovEvgeny/serde.zig/actions/workflows/ci.yml/badge.svg)](https://github.com/OrlovEvgeny/serde.zig/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/OrlovEvgeny/serde.zig?label=release)](https://github.com/OrlovEvgeny/serde.zig/releases/latest)
-[![Zig](https://img.shields.io/badge/zig-0.15.2%20%7C%200.16.0%20%7C%200.17--dev-blue)](https://ziglang.org/download/)
+[![Zig](https://img.shields.io/badge/zig-0.15.2%20%7C%200.16.0%20%7C%200.17.0%20%7C%200.18--dev-blue)](https://ziglang.org/download/)
 
 Serialization framework for Zig
 
@@ -55,13 +55,14 @@ To track development instead of a release:
 zig fetch --save git+https://github.com/OrlovEvgeny/serde.zig
 ```
 
-serde.zig supports Zig 0.15.2 and 0.16.0, and CI also tracks Zig master:
+serde.zig supports Zig 0.15.2, 0.16.0 and 0.17.0, and CI also tracks Zig master:
 
 | Zig version           | Status                                                            |
 | --------------------- | ----------------------------------------------------------------- |
-| `0.16.0`              | default toolchain, required in docs CI                               |
+| `0.17.0`              | default toolchain, required in docs CI                            |
+| `0.16.0`              | supported                                                         |
 | `0.15.2`              | supported compatibility baseline                                  |
-| `0.17-dev` / `master` | supported against current development snapshots and tracked in CI |
+| `0.18-dev` / `master` | supported against current development snapshots and tracked in CI |
 
 ## Why serde.zig?
 
