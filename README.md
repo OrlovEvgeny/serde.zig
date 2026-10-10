@@ -6,9 +6,9 @@
 
 Serialization framework for Zig
 
-Uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize supported Zig types across JSON, MessagePack, Erlang ETF, TOML, YAML, XML, ZON, TOON, and CSV without macros, code generation, or runtime type information.
+serde.zig uses Zig's comptime reflection (`@typeInfo`) to serialize and deserialize supported Zig types across JSON, MessagePack, Erlang ETF, TOML, YAML, XML, ZON, TOON, and CSV without macros, code generation, or runtime type information.
 
-## Quick Start
+## Quick start
 
 Add the v1.2.2 dependency:
 
@@ -55,9 +55,7 @@ To track development instead of a release:
 zig fetch --save git+https://github.com/OrlovEvgeny/serde.zig
 ```
 
-Supports Zig 0.15.2 and 0.16.0; CI also tracks Zig master.
-
-Supported Zig versions:
+serde.zig supports Zig 0.15.2 and 0.16.0, and CI also tracks Zig master:
 
 | Zig version           | Status                                                            |
 | --------------------- | ----------------------------------------------------------------- |
@@ -67,23 +65,23 @@ Supported Zig versions:
 
 ## Why serde.zig?
 
-**Inferred mappings.** Declare a supported struct and serialize it without macros or code generation. Comptime reflection chooses its mapping; parsing and input validation happen at runtime.
+You declare a supported struct and serialize it, with no macros or code generation. Comptime reflection picks the mapping; parsing and input validation happen at runtime.
 
-**Nine formats, shared core.** JSON, MessagePack, Erlang ETF, TOML, YAML, XML, ZON, TOON, and CSV share a generic core and similar convenience functions. Root types, writer arguments, and format capabilities differ; consult the capability matrix.
+All nine formats share a generic core and similar convenience functions. Root types, writer arguments, and capabilities differ between formats, so check the capability matrix.
 
-**Out-of-band schemas.** Serialize the same type differently in different contexts without modifying the type itself. Essential for third-party types and API versioning.
+Out-of-band schemas serialize the same type differently in different contexts without modifying the type. This helps with third-party types and API versioning.
 
-**Zero-copy JSON.** `fromSliceBorrowed` returns string slices that point directly into the input buffer when no escape sequences are present. String views avoid copying; containers and custom hooks can still allocate.
+For JSON, `fromSliceBorrowed` returns string slices that point directly into the input buffer when no escape sequences are present. Strings are not copied, though containers and custom hooks can still allocate.
 
-**Comptime validation.** Unsupported type operations and ambiguous field names can be rejected at compile time. Missing input fields and malformed input are runtime errors. Structural backend checks are opt-in.
+Unsupported type operations and ambiguous field names can be rejected at compile time. Missing input fields and malformed input are runtime errors. Structural backend checks are opt-in.
 
-## Table of Contents
+## Table of contents
 
 - [Why serde.zig?](#why-serdezig)
-- [Quick Start](#quick-start)
+- [Quick start](#quick-start)
 - [Installation](#installation)
 - [Formats](#formats)
-- [Supported Types](#supported-types)
+- [Supported types](#supported-types)
 - [Erlang ETF / OTP 29](#erlang-etf--otp-29)
 - [Examples](#examples)
   - [Nested structs](#nested-structs)
@@ -99,7 +97,7 @@ Supported Zig versions:
   - [XML](#xml)
   - [ZON](#zon)
   - [TOON](#toon)
-- [Serde Options](#serde-options)
+- [Serde options](#serde-options)
   - [Field renaming](#field-renaming)
   - [Asymmetric renaming](#asymmetric-renaming)
   - [Field aliases](#field-aliases)
@@ -111,11 +109,11 @@ Supported Zig versions:
   - [Union tagging styles](#union-tagging-styles)
   - [Enum representation](#enum-representation)
   - [Per-field custom serialization](#per-field-custom-serialization)
-- [Out-of-Band Schema](#out-of-band-schema)
-- [Out-of-Band Type Overrides](#out-of-band-type-overrides)
-- [Custom Serialization](#custom-serialization)
+- [Out-of-band schema](#out-of-band-schema)
+- [Out-of-band type overrides](#out-of-band-type-overrides)
+- [Custom serialization](#custom-serialization)
 - [JSON diagnostics](#json-diagnostics)
-- [Error Handling](#error-handling)
+- [Error handling](#error-handling)
 - [Performance](#performance)
 - [Tests](#tests)
 - [License](#license)
@@ -134,7 +132,7 @@ Supported Zig versions:
 | TOON                | `serde.toon`    | +         | +           |
 | CSV                 | `serde.csv`     | +         | +           |
 
-The common convenience API is illustrated below using JSON. Some formats require extra writer arguments or restrict root types:
+The snippet below shows the common convenience API with JSON. Some formats take extra writer arguments or restrict root types:
 
 ```zig
 // Serialization
@@ -146,7 +144,7 @@ const val = try serde.json.fromSlice(T, allocator, bytes);
 const val = try serde.json.fromReader(T, allocator, &reader);
 ```
 
-## Supported Types
+## Supported types
 
 - `bool`, `i8`..`i128`, `u8`..`u128`, `f16`..`f128`
 - `[]const u8`, `[]u8`, `[:0]const u8` (strings)
@@ -204,16 +202,15 @@ defer parsed.deinit();
 useUser(parsed.value);
 ```
 
-The result owns a separate arena with a stable address, including allocations
-made by custom adapters through their provided arena allocator. Move the result freely,
-but keep one owner and call `deinit` exactly once. Do not separately free its
-fields. This API owns allocated output independently of the input; static Zig
-and schema defaults remain static. It does not close resources such as files
-opened by custom hooks.
+The result owns a separate arena with a stable address. Custom adapters allocate
+into the same arena through the allocator they are given. You can move the
+result, but keep one owner, call `deinit` exactly once, and do not free its
+fields separately. Allocated output is independent of the input, while static
+Zig and schema defaults stay static. The API does not close resources such as
+files opened by custom hooks.
 
-Existing `fromSlice` signatures are unchanged. They allocate strings and
-containers with the caller's allocator; an arena remains convenient for batch
-parsing:
+`fromSlice` allocates strings and containers with the caller's allocator. An
+arena is convenient for batch parsing:
 
 ```zig
 var arena = std.heap.ArenaAllocator.init(allocator);
@@ -228,10 +225,10 @@ parsing or your own arena for custom types whose ownership cannot be inferred
 from their fields. A nonallocating field `with.deserialize` may retain its wire
 value; an allocating `with.deserializeAlloc` must produce an independent result.
 
-Formats retain their root restrictions and writer signatures: CSV reads rows
-into a slice of structs, TOML reads a struct/table, and XML adds a root element.
-Managed parsing does not change these representations. `fromReader` variants
-own their temporary input buffers and release them after conversion.
+Managed parsing keeps each format's root restrictions and writer signatures:
+CSV reads rows into a slice of structs, TOML reads a struct or table, and XML
+adds a root element. `fromReader` variants own their temporary input buffers
+and release them after conversion.
 
 ### Zero-copy deserialization
 
@@ -243,10 +240,10 @@ const msg = try serde.json.fromSliceBorrowed(Msg, allocator, input);
 // msg.name points into input, input must outlive msg
 ```
 
-Borrowed JSON requires the input to outlive the result. Escaped strings are
-rejected with `InvalidEscape`; the API does not silently allocate replacements.
-This applies inside arrays and nested containers too. Use a separate arena for
-container metadata, and do not pass borrowed results to `freeAllocated`.
+The input must outlive the result. An escaped string fails with `InvalidEscape`
+instead of being copied into a new allocation, and that holds inside arrays and
+nested containers too. Use a separate arena for container metadata, and do not
+pass borrowed results to `freeAllocated`.
 
 ### Pretty-printed output
 
@@ -390,7 +387,7 @@ Fields listed in `xml_attribute` are serialized as XML attributes on the root el
 
 ### ZON
 
-Produces valid `.zon` files:
+`serde.zon` writes valid `.zon` files:
 
 ```zig
 const bytes = try serde.zon.toSlice(allocator, Config{
@@ -410,7 +407,7 @@ const bytes = try serde.zon.toSlice(allocator, Config{
 
 ### TOON
 
-Produces compact TOON documents for the JSON data model:
+`serde.toon` writes compact TOON documents for the JSON data model:
 
 ```zig
 const bytes = try serde.toon.toSlice(allocator, Config{
@@ -427,7 +424,7 @@ const bytes = try serde.toon.toSlice(allocator, Config{
 
 ## Erlang ETF / OTP 29
 
-`serde.etf` supports the current [External Term Format](https://www.erlang.org/doc/apps/erts/erl_ext_dist.html) and the connected-message portion of the [OTP 29 Distribution Protocol](https://www.erlang.org/docs/29/apps/erts/erl_dist_protocol.html), including legacy input tags, arbitrary bignums, improper lists, bit-binaries, maps with term keys, process identities, funs, exports, opaque top-level `LOCAL_EXT`, and OTP 29 native `RECORD_EXT`. It offers two APIs:
+`serde.etf` supports the current [External Term Format](https://www.erlang.org/doc/apps/erts/erl_ext_dist.html) and the connected-message portion of the [OTP 29 Distribution Protocol](https://www.erlang.org/docs/29/apps/erts/erl_dist_protocol.html), including legacy input tags, arbitrary bignums, improper lists, bit-binaries, maps with term keys, process identities, funs, exports, opaque top-level `LOCAL_EXT`, and OTP 29 native `RECORD_EXT`. It has two APIs:
 
 - Typed serialization for ordinary Zig values, with the same rename, skip, flatten, union, schema, and custom-adapter rules as the other formats.
 - An owning `Term` model for exact Erlang semantics, with `deinit`, `clone`, and semantic `eql`.
@@ -478,7 +475,7 @@ Legacy float/atom/pid/port/reference and compact number/tuple tags normalize to 
 
 ### Compression and limits
 
-`COMPRESSED_EXT` is decoded automatically with its zlib checksum verified. Encoding supports `.never` (default), `.always`, and `.threshold`; `zlib_level` 0 stores the payload uncompressed while 1-9 trade speed for ratio. Defensive defaults apply to both dynamic and typed APIs:
+The decoder unpacks `COMPRESSED_EXT` automatically and verifies its zlib checksum. Encoding supports `.never` (default), `.always`, and `.threshold`; `zlib_level` 0 stores the payload uncompressed while 1-9 trade speed for ratio. Defensive defaults apply to both dynamic and typed APIs:
 
 - 10 MiB input/output and uncompressed term size
 - depth 256
@@ -512,9 +509,9 @@ while (try decoder.next()) |message_value| {
 
 The encoder checks negotiated flags before spawn, payload-exit, unlink-id, alias, alternate-action, fragmentation, or native-record use. The decoder limits frames/reassembled messages to 10 MiB, concurrent fragment sequences to 64, and fragments per sequence to 1024 by default. Legacy pass-through type 112 is accepted.
 
-This module begins after a distribution handshake. EPMD, node handshakes, cookies, TCP/TLS, reconnection, and a ready-made Erlang node client are intentionally out of scope.
+The module takes over after the distribution handshake. EPMD, node handshakes, cookies, TCP/TLS, reconnection, and a ready-made Erlang node client are intentionally out of scope.
 
-## Serde Options
+## Serde options
 
 Customize serialization behavior by declaring `pub const serde` on your types. All options are resolved at comptime.
 
@@ -539,7 +536,7 @@ Available conventions: `.camel_case`, `.snake_case`, `.pascal_case`, `.kebab_cas
 
 ### Asymmetric renaming
 
-Use different names for serialization and deserialization. This is essential for API evolution, rolling upgrades, and interoperating with systems that use different naming conventions for input vs output.
+Serialization and deserialization can use different names. This helps while an API is changing or a rolling upgrade is in progress, and with systems that use one naming convention for input and another for output.
 
 ```zig
 const User = struct {
@@ -563,7 +560,7 @@ Direction-specific options (`rename_serialize`, `rename_deserialize`, `rename_al
 
 ### Field aliases
 
-Accept multiple input names for a single field during deserialization. Aliases do not affect serialization output. Useful for backward compatibility when field names change across API versions.
+Aliases let one field accept several input names during deserialization. They do not affect serialization output. Use them for backward compatibility when field names change between API versions.
 
 ```zig
 const Config = struct {
@@ -579,7 +576,7 @@ const Config = struct {
 // Serializes as: {"endpoint": "..."}
 ```
 
-Aliases work together with rename and rename_all:
+Aliases combine with `rename` and `rename_all`:
 
 ```zig
 const User = struct {
@@ -664,11 +661,11 @@ pub const serde = .{
 
 `skip.always` skips both directions. A schema entry, including explicit `false`,
 overrides the corresponding in-type setting. Skipped input fields still need a
-Zig/schema default or an optional type to construct the result.
+Zig or schema default, or an optional type, to construct the result.
 
 ### Default values
 
-Zig's struct default values are used during deserialization when a field is absent from the input:
+When a field is missing from the input, deserialization uses the struct's Zig default value:
 
 ```zig
 const Config = struct {
@@ -771,9 +768,9 @@ const Event = struct {
 
 Built-in helpers: `serde.helpers.UnixTimestamp`, `serde.helpers.UnixTimestampMs`, `serde.helpers.Base64`.
 
-## Out-of-Band Schema
+## Out-of-band schema
 
-Override serialization behavior externally, without modifying the type. Useful for third-party types you don't control, or when the same type needs different wire representations in different contexts.
+An external schema changes how a type serializes without modifying the type. Use it for third-party types you don't control, or when the same type needs different wire representations in different contexts.
 
 ```zig
 const Point = struct { x: f64, y: f64, z: f64 };
@@ -814,15 +811,15 @@ const compact = try serde.json.toSliceSchema(allocator, point, compact_schema);
 // => {"a":1.0e0,"b":2.0e0}
 ```
 
-Schema supports all the same options as `pub const serde`: `rename`, `rename_all`, `rename_serialize`, `rename_deserialize`, `rename_all_serialize`, `rename_all_deserialize`, `alias`, `skip`, `skip_serializing`, `skip_deserializing`, `default`, `with`, `deny_unknown_fields`, `flatten`, `tag`, `tag_field`, `content_field`, `enum_repr`.
+A schema accepts the same options as `pub const serde`: `rename`, `rename_all`, `rename_serialize`, `rename_deserialize`, `rename_all_serialize`, `rename_all_deserialize`, `alias`, `skip`, `skip_serializing`, `skip_deserializing`, `default`, `with`, `deny_unknown_fields`, `flatten`, `tag`, `tag_field`, `content_field`, `enum_repr`.
 
-When both an external schema and `pub const serde` exist on a type, the external schema takes priority.
+When a type declares `pub const serde` and you also pass an external schema, the external schema takes priority.
 
-All `*Schema` variants are available on every format module: `toSliceSchema`, `toWriterSchema`, `fromSliceSchema`, `fromReaderSchema`, etc.
+Every format module has the `*Schema` variants: `toSliceSchema`, `toWriterSchema`, `fromSliceSchema`, `fromReaderSchema`, and so on.
 
-## Out-of-Band Type Overrides
+## Out-of-band type overrides
 
-Override how specific types are serialized/deserialized at the call site, without modifying the type. This is useful for third-party types you don't own (e.g. `std.ArrayList`, external library structs) or when you need a one-off representation.
+A type override changes how a specific type is serialized and deserialized at the call site, without modifying the type. Use it for types you don't own, such as `std.ArrayList` or structs from another library, or for a one-off representation.
 
 Pass a comptime map of `{Type, Adapter}` pairs to the `*WithMap` functions:
 
@@ -883,15 +880,16 @@ const result = try serde.json.fromSliceWithMap(Event, arena.allocator(), bytes, 
 
 The map is a comptime tuple where each entry is `.{ TargetType, AdapterModule }`. The adapter module must provide:
 
-- `fn serialize(value: T, s: anytype) !void` -- writes the value to the serializer
-- `fn deserialize(comptime T: type, allocator: Allocator, d: anytype) !T` -- reads the value from the deserializer
+- `fn serialize(value: T, s: anytype) !void` writes the value to the serializer.
+- `fn deserialize(comptime T: type, allocator: Allocator, d: anytype) !T` reads the value from the deserializer.
 
 When serde encounters a type that matches a map entry, it calls the adapter instead of the default comptime-derived serialization. The check happens at every level: top-level values, struct fields, array elements, optional contents, and union payloads.
 
 ### Available functions
 
-JSON provides the following map-aware convenience functions (TOON and ETF also
-provide format-specific map variants). Other formats use the core functions:
+JSON has these map-aware convenience functions. TOON and ETF have their own
+format-specific map variants, and the other formats use the core functions
+shown further down:
 
 ```zig
 // Serialize
@@ -962,7 +960,7 @@ const bytes = try serde.json.toSliceWithMap(allocator, resp, map);
 // Without the map, body would serialize as {"items":"OK","capacity":N,"items.len":2}
 ```
 
-## Custom Serialization
+## Custom serialization
 
 For full control, declare `zerdeSerialize` and/or `zerdeDeserialize` on your type:
 
@@ -994,28 +992,28 @@ const bytes = try serde.json.toSlice(allocator, StringWrappedU64{ .inner = 12345
 ## JSON diagnostics
 
 Use `json.fromSliceManagedWithDiagnostics(T, allocator, input, options, &diagnostics)`
-with `var diagnostics = serde.json.Diagnostics.init(&path_buffer)` to retain the
+with `var diagnostics = serde.json.Diagnostics.init(&path_buffer)` to keep the
 original error, JSON pointer, byte offset, line, and byte column. The path uses only
 the supplied buffer; a short buffer sets `path_truncated` without changing the error.
 See the [application guide](docs/application-author.md#json-diagnostics).
 
-## Error Handling
+## Error handling
 
 Deserialization returns specific errors:
 
-- `error.UnexpectedToken` -- malformed input
-- `error.UnexpectedEof` -- input ended prematurely
-- `error.MissingField` -- required struct field absent
-- `error.UnknownField` -- unexpected field (with `deny_unknown_fields`)
-- `error.InvalidNumber` -- number parse failure or overflow
-- `error.InvalidUnicode` -- malformed unicode escape (e.g. lone surrogate)
-- `error.InvalidControlCharacter` -- unescaped control char in JSON string
-- `error.MaxDepthExceeded` -- JSON nesting deeper than configured limit
-- `error.WrongType` -- input type doesn't match target type
-- `error.DuplicateField` -- same field appears twice
-- `error.FieldCountMismatch` -- CSV row has fewer fields than headers
-- `error.MalformedXml` -- structurally invalid XML (e.g. `--` inside comment)
-- `error.InvalidYaml` -- structurally invalid YAML
+- `error.UnexpectedToken`: malformed input
+- `error.UnexpectedEof`: input ended prematurely
+- `error.MissingField`: required struct field absent
+- `error.UnknownField`: unexpected field (with `deny_unknown_fields`)
+- `error.InvalidNumber`: number parse failure or overflow
+- `error.InvalidUnicode`: malformed unicode escape (e.g. lone surrogate)
+- `error.InvalidControlCharacter`: unescaped control char in JSON string
+- `error.MaxDepthExceeded`: JSON nesting deeper than configured limit
+- `error.WrongType`: input type doesn't match target type
+- `error.DuplicateField`: same field appears twice
+- `error.FieldCountMismatch`: CSV row has fewer fields than headers
+- `error.MalformedXml`: structurally invalid XML (e.g. `--` inside comment)
+- `error.InvalidYaml`: structurally invalid YAML
 
 ```zig
 const result = serde.json.fromSlice(Config, allocator, input) catch |err| switch (err) {
@@ -1025,9 +1023,9 @@ const result = serde.json.fromSlice(Config, allocator, input) catch |err| switch
 };
 ```
 
-## Deserialize Options
+## Deserialize options
 
-Each format exposes a `fromSliceWith` entry point taking format-specific options.
+Each format has a `fromSliceWith` entry point that takes format-specific options.
 
 ### JSON (`serde.json.DeserializeOptions`)
 
@@ -1039,9 +1037,8 @@ const val = try serde.json.fromSliceWith(Config, allocator, input, .{
 });
 ```
 
-Defaults reject behavior that violates RFC 8259. Set `lenient_null_to_zero` to opt
-back into pre-fix behavior where JSON `null` silently became `0` for non-optional
-numeric fields.
+The defaults reject input that violates RFC 8259. Set `lenient_null_to_zero` to
+read JSON `null` as `0` for non-optional numeric fields.
 
 ### YAML (`serde.yaml.DeserializeOptions`)
 
@@ -1052,8 +1049,8 @@ const val = try serde.yaml.fromSliceWith(Config, allocator, input, .{
 });
 ```
 
-Default is YAML 1.2 behavior. Enabling `yaml_11_booleans` brings the "Norway
-problem" (`country: NO` -> `false`).
+The default follows YAML 1.2. Enabling `yaml_11_booleans` brings the
+"Norway problem", where `country: NO` parses as `false`.
 
 ### CSV (`Dialect.strict_field_count`)
 
@@ -1062,9 +1059,9 @@ const dialect = serde.csv.Dialect{ .strict_field_count = true };
 const rows = try serde.csv.fromSliceWith([]const Row, allocator, input, dialect);
 ```
 
-Defaults to true: rows with fewer fields than headers produce
-`error.FieldCountMismatch`. Set to false to silently fill missing trailing
-fields with empty values.
+`strict_field_count` defaults to true, so a row with fewer fields than the
+header fails with `error.FieldCountMismatch`. Set it to false to silently fill
+missing trailing fields with empty values.
 
 ### JSON serializer (`serde.json.Options.escape_js_unsafe`)
 
@@ -1072,9 +1069,9 @@ fields with empty values.
 const bytes = try serde.json.toSliceWith(allocator, value, .{ .escape_js_unsafe = true });
 ```
 
-When true, U+2028 and U+2029 are escaped as `/`. They are valid
-JSON characters but illegal in JavaScript string literals; escape when embedding
-output in HTML `<script>` tags.
+When true, U+2028 and U+2029 are escaped as `/`. Both characters are valid in
+JSON but illegal in JavaScript string literals, so turn this on when you embed
+the output in an HTML `<script>` tag.
 
 ## Migration
 
@@ -1104,22 +1101,24 @@ zig build bench -Dbench-filter=json -Dbench-out=bench/results.json
 ```
 
 Results use schema version 3. Each operation reports the median and min/max of
-seven samples; allocation counts are measured in a separate probe. `warm` and
-`cold` measure complete operations including allocation; these labels control
-warmup, not hardware cache flushing. Complete calls use `std.heap.smp_allocator`.
-`cpu` uses a retained arena or fixed output buffer. Input generation,
-MessagePack encoding for decode tests, and map setup
-happen outside measurements. NDJSON measures the actual streaming reader.
+seven samples; a separate probe measures allocation counts. `warm` and `cold`
+measure complete operations including allocation. The labels only control
+warmup; neither one flushes hardware caches. Complete calls use
+`std.heap.smp_allocator`, and `cpu` uses a retained arena or fixed output
+buffer. Input generation, MessagePack encoding for decode tests, and map setup
+happen outside measurements. The NDJSON benchmark runs the real streaming
+reader.
 
-The suite includes wide structs, reordered keys and aliases, long and escaped
+The suite covers wide structs, reordered keys and aliases, long and escaped
 strings, nested collections, MessagePack and `std.json`. Throughput uses the
-actual input/output size. Run with one compiler, target, optimization mode, and
-harness for both revisions; avoid concurrent builds. Results from versions 1
-and 2 are not comparable and are rejected as baselines.
+real input/output size. When comparing two revisions, use the same compiler,
+target, optimization mode, and harness for both, and don't run other builds at
+the same time. Results from schema versions 1 and 2 are not comparable and are
+rejected as baselines.
 
 See [the implementation and benchmark report](docs/core-serde-improvements.md)
 for local before/after measurements, reproducible commands, and remaining costs.
-CI copies the current harness into the PR base checkout before comparing it.
+Before comparing, CI copies the current harness into the PR base checkout.
 The default benchmark optimize mode is `ReleaseFast`; `zig build --help` lists
 filters, baseline and threshold options.
 
