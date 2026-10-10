@@ -61,6 +61,6 @@ these format differences.
   This covers that corpus, not every possible ETF term or distribution exchange.
 - Nine fuzz harnesses are compiled by CI. Long-running fuzz execution and complete
   conformance suites remain future work. Passing compilation is not a fuzz result.
-- Linux/macOS/Windows and Zig 0.15.2/0.16.0/master are configured in CI. A local
-  run proves only the tested host and installed compiler revisions. See
+- Linux/macOS/Windows and Zig 0.15.2/0.16.0/0.17.0/master are configured in CI.
+  A local run proves only the tested host and installed compiler revisions. See
   [the release verification record](v1.2.0-verification.md).
