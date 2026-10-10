@@ -1069,9 +1069,10 @@ missing trailing fields with empty values.
 const bytes = try serde.json.toSliceWith(allocator, value, .{ .escape_js_unsafe = true });
 ```
 
-When true, U+2028 and U+2029 are escaped as `/`. Both characters are valid in
-JSON but illegal in JavaScript string literals, so turn this on when you embed
-the output in an HTML `<script>` tag.
+When true, U+2028 and U+2029 are written as ` ` and ` `. Both
+characters are valid in JSON, but JavaScript before ES2019 does not allow them
+in string literals. Turn this on when you embed the output in an HTML
+`<script>` tag that older engines may run.
 
 ## Migration
 
