@@ -1023,9 +1023,10 @@ const result = serde.json.fromSlice(Config, allocator, input) catch |err| switch
 };
 ```
 
-## Deserialize options
+## Format options
 
-Each format has a `fromSliceWith` entry point that takes format-specific options.
+Each format has a `fromSliceWith` entry point that takes format-specific
+deserialize options. JSON also takes serializer options through `toSliceWith`.
 
 ### JSON (`serde.json.DeserializeOptions`)
 
