@@ -149,7 +149,7 @@ pub fn assertDeserializer(comptime D: type) void {
 
 fn errorNames(comptime E: type) ?[]const [:0]const u8 {
     const info = @typeInfo(E).error_set;
-    // Newer Zig master exposes names directly in a struct instead of a slice.
+    // Zig 0.17+ exposes names directly in a struct instead of a slice.
     if (@typeInfo(@TypeOf(info)) == .@"struct") return info.error_names;
     const errors = info orelse return null;
     comptime var names: [errors.len][:0]const u8 = undefined;
