@@ -1,7 +1,9 @@
 [tools]
-zig = "0.16.0"
+zig = "0.17.0"
 
 [tasks.fmt]
+# zig fmt from 0.17 rewrites builtins that 0.15 and 0.16 do not have.
+tools = { zig = "0.16.0" }
 run = "zig fmt --check src/ bench/ build.zig"
 
 [tasks.build]
@@ -29,3 +31,6 @@ run = "mise -E zig16 run ci"
 
 [tasks.ci-17]
 run = "mise -E zig17 run ci"
+
+[tasks.ci-18]
+run = "mise -E zig18 run ci"
