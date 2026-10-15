@@ -24,8 +24,9 @@ exe.root_module.addImport("serde", serde_dep.module("serde"));
 ```
 
 This complete program serializes a value and releases both the output bytes and
-the managed parse result. [Run the example](examples/managed_json/main.zig)
-with `zig build example-managed-json`.
+the managed parse result. For validation and error diagnostics, run the
+[managed JSON example](examples/managed_json/README.md) with
+`zig build example-managed-json`.
 
 ```zig
 const std = @import("std");
@@ -163,6 +164,10 @@ const val = try serde.json.fromReader(T, allocator, &reader);
 - `void` (serialized as null)
 
 ## Examples
+
+The [runnable examples](examples/README.md) cover order processing, configuration
+validation, CSV reports, log streaming, and binary telemetry. Each has a README
+with its run command, inputs, expected output, and memory ownership details.
 
 ### Nested structs
 

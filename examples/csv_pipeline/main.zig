@@ -5,82 +5,73 @@ const Employee = struct {
     id: u32,
     name: []const u8,
     department: []const u8,
-    salary: f64,
+    annual_salary_cents: u64,
     remote: bool,
     manager: ?[]const u8,
+};
+const Totals = struct {
+    headcount: u64 = 0,
+    remote_count: u64 = 0,
+    annual_payroll_cents: u64 = 0,
+};
+const DepartmentReport = struct {
+    department: []const u8,
+    headcount: u64,
+    remote_count: u64,
+    annual_payroll_cents: u64,
 };
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
-
-    const file = try serde.compat.openFileForRead("examples/csv_pipeline/employees.csv");
-    defer serde.compat.closeFile(file);
-    var file_buf: [65536]u8 = undefined;
-    var file_reader = serde.compat.fileReaderStreaming(file, &file_buf);
-    const csv_input = try serde.compat.readerAllocRemaining(&file_reader, allocator, .unlimited);
-    defer allocator.free(csv_input);
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    std.debug.print("=== Streaming CSV rows ===\n", .{});
-    var stream = try serde.csv.streamingDeserializer([]const Employee, arena.allocator(), csv_input);
+    const input = try serde.compat.readFileAlloc(allocator, "examples/csv_pipeline/employees.csv", 1024 * 1024);
+    defer allocator.free(input);
+    // The CSV scanner works over an input slice. Rows are decoded one at a time,
+    // but the source file remains in memory for the duration of this import.
+    var stream = try serde.csv.streamingDeserializer([]const Employee, allocator, input);
     defer stream.deinit();
-
-    var total_count: u32 = 0;
-    var total_salary: f64 = 0.0;
-    var dept_counts = std.StringHashMap(u32).init(allocator);
+    var departments = std.StringHashMap(Totals).init(allocator);
     defer {
-        var dit = dept_counts.iterator();
-        while (dit.next()) |e| allocator.free(e.key_ptr.*);
-        dept_counts.deinit();
+        var it = departments.iterator();
+        while (it.next()) |entry| allocator.free(entry.key_ptr.*);
+        departments.deinit();
     }
-
-    while (try stream.next()) |emp| {
-        total_count += 1;
-        total_salary += emp.salary;
-
-        const gop = try dept_counts.getOrPut(emp.department);
-        if (!gop.found_existing) {
-            gop.key_ptr.* = try allocator.dupe(u8, emp.department);
-            gop.value_ptr.* = 1;
-        } else {
-            gop.value_ptr.* += 1;
+    var count: u64 = 0;
+    while (try stream.next()) |employee| {
+        defer serde.core.freeAllocated(Employee, employee, allocator);
+        if (employee.id == 0 or employee.name.len == 0 or employee.department.len == 0)
+            return error.InvalidEmployee;
+        if (!departments.contains(employee.department)) {
+            // Aggregate keys must outlive the current row.
+            const name = try allocator.dupe(u8, employee.department);
+            errdefer allocator.free(name);
+            try departments.put(name, .{});
         }
-
-        std.debug.print("  [{d}] {s} - {s} (${d:.2}) remote={any}", .{
-            emp.id,
-            emp.name,
-            emp.department,
-            emp.salary,
-            emp.remote,
-        });
-        if (emp.manager) |m| std.debug.print(" manager={s}", .{m});
-        std.debug.print("\n", .{});
+        const totals = departments.getPtr(employee.department).?;
+        totals.headcount = try std.math.add(u64, totals.headcount, 1);
+        totals.remote_count = try std.math.add(u64, totals.remote_count, @intFromBool(employee.remote));
+        totals.annual_payroll_cents = try std.math.add(u64, totals.annual_payroll_cents, employee.annual_salary_cents);
+        count = try std.math.add(u64, count, 1);
     }
+    if (count == 0) return error.EmptyImport;
 
-    const avg_salary = if (total_count > 0) total_salary / @as(f64, @floatFromInt(total_count)) else 0.0;
-    std.debug.print("\n=== Aggregate Stats ===\n", .{});
-    std.debug.print("Total employees: {}\n", .{total_count});
-    std.debug.print("Average salary:  ${d:.2}\n", .{avg_salary});
-    std.debug.print("By department:\n", .{});
-    var dept_it = dept_counts.iterator();
-    while (dept_it.next()) |e|
-        std.debug.print("  {s}: {}\n", .{ e.key_ptr.*, e.value_ptr.* });
-
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-    const all_emps = try serde.csv.fromSlice([]const Employee, arena2.allocator(), csv_input);
-    const json_out = try serde.json.toSliceWith(allocator, all_emps, .{ .pretty = true });
-    defer allocator.free(json_out);
-    std.debug.print("\n=== All employees as JSON ===\n{s}\n", .{json_out});
-
-    const TsvRow = struct { name: []const u8, score: i32 };
-    const tsv_data = "name\tscore\nAlice\t95\nBob\t87\n";
-    var arena3 = std.heap.ArenaAllocator.init(allocator);
-    defer arena3.deinit();
-    const tsv_rows = try serde.csv.fromSliceWith([]const TsvRow, arena3.allocator(), tsv_data, serde.csv.tsv_dialect);
-    std.debug.print("\n=== TSV dialect demo ===\n", .{});
-    for (tsv_rows) |row|
-        std.debug.print("  {s}: {}\n", .{ row.name, row.score });
+    var report: std.ArrayList(DepartmentReport) = .empty;
+    defer report.deinit(allocator);
+    var it = departments.iterator();
+    while (it.next()) |entry| {
+        try report.append(allocator, .{
+            .department = entry.key_ptr.*,
+            .headcount = entry.value_ptr.headcount,
+            .remote_count = entry.value_ptr.remote_count,
+            .annual_payroll_cents = entry.value_ptr.annual_payroll_cents,
+        });
+    }
+    std.mem.sort(DepartmentReport, report.items, {}, struct {
+        fn lessThan(_: void, a: DepartmentReport, b: DepartmentReport) bool {
+            return std.mem.lessThan(u8, a.department, b.department);
+        }
+    }.lessThan);
+    const output = try serde.csv.toSlice(allocator, report.items);
+    defer allocator.free(output);
+    std.debug.print("Imported {d} employees into {d} department totals (EUR cents)\n", .{ count, report.items.len });
+    try serde.compat.writeStdout(output);
 }

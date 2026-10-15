@@ -1,6 +1,6 @@
-id,name,department,salary,remote,manager
-1,Alice Smith,Engineering,125000.00,true,
-2,Bob Jones,Marketing,95000.50,false,Alice Smith
-3,Charlie Brown,Engineering,110000.00,true,Alice Smith
-4,"Davis, Jr.",Engineering,130000.00,true,Bob Jones
-5,Eve Wilson,Marketing,89000.00,false,
+id,name,department,annual_salary_cents,remote,manager
+1,Alice Smith,Engineering,12500000,true,
+2,Bob Jones,Marketing,9500050,false,Alice Smith
+3,Charlie Brown,Engineering,11000000,true,Alice Smith
+4,"Davis, Jr.",Engineering,13000000,true,Bob Jones
+5,Eve Wilson,Marketing,8900000,false,

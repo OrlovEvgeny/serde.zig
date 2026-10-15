@@ -1,0 +1,5 @@
+{
+  "id": "mail-1042",
+  "recipients": ["alice@example.com", "bob@example.com"],
+  "retry": {"max_attempts": 5}
+}

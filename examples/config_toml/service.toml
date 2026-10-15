@@ -1,0 +1,11 @@
+# Omitted settings inherit the defaults declared in AppConfig.
+app_name = "orders-api"
+
+[server]
+port = 9090
+workers = 8
+
+[database]
+host = "db.internal"
+name = "orders"
+max_connections = 25

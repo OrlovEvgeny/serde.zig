@@ -1,6 +1,6 @@
 # Application author guide
 
-Use [the complete managed JSON example](../examples/managed_json/main.zig):
+Use [the complete managed JSON example](../examples/managed_json/README.md):
 `zig build example-managed-json`. Connect the `serde` dependency as shown in the
 README. Choose a format using the [capability matrix](capabilities.md).
 

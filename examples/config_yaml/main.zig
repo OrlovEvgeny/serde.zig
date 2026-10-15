@@ -1,79 +1,62 @@
 const std = @import("std");
 const serde = @import("serde");
 
+// A deliberately small Compose-style schema, not a full Compose implementation.
 const Service = struct {
     image: []const u8,
-    ports: []const u16,
+    ports: []const []const u8 = &.{},
     environment: ?std.StringHashMap([]const u8) = null,
-    restart: ?[]const u8 = null,
-    depends_on: ?[]const []const u8 = null,
+    restart: []const u8 = "unless-stopped",
+    depends_on: []const []const u8 = &.{},
 };
-
-const DockerCompose = struct {
-    services: std.StringHashMap(Service),
+const Deployment = struct { services: std.StringHashMap(Service) };
+const ServiceSummary = struct {
+    name: []const u8,
+    image: []const u8,
+    published_ports: []const []const u8,
+    dependency_count: usize,
 };
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
+    const input = try serde.compat.readFileAlloc(allocator, "examples/config_yaml/docker.yaml", 256 * 1024);
+    defer allocator.free(input);
+    var parsed = try serde.yaml.fromSliceManaged(Deployment, allocator, input);
+    defer parsed.deinit();
+    const services = parsed.value.services;
+    if (services.count() == 0) return error.EmptyDeployment;
 
-    const file = try serde.compat.openFileForRead("examples/config_yaml/docker.yaml");
-    defer serde.compat.closeFile(file);
-    var file_buf: [65536]u8 = undefined;
-    var file_reader = serde.compat.fileReaderStreaming(file, &file_buf);
-    const yaml_input = try serde.compat.readerAllocRemaining(&file_reader, allocator, .unlimited);
-    defer allocator.free(yaml_input);
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const compose = try serde.yaml.fromSlice(DockerCompose, arena.allocator(), yaml_input);
-
-    std.debug.print("=== Parsed Docker Compose ===\n", .{});
-    var it = compose.services.iterator();
+    var summaries: std.ArrayList(ServiceSummary) = .empty;
+    defer summaries.deinit(allocator);
+    var it = services.iterator();
     while (it.next()) |entry| {
-        std.debug.print("Service \"{s}\":\n", .{entry.key_ptr.*});
-        std.debug.print("  image: {s}\n", .{entry.value_ptr.image});
-        std.debug.print("  ports:", .{});
-        for (entry.value_ptr.ports) |p| std.debug.print(" {}", .{p});
-        std.debug.print("\n", .{});
-        if (entry.value_ptr.environment) |env| {
-            var env_it = env.iterator();
-            while (env_it.next()) |e|
-                std.debug.print("  {s}: {s}\n", .{ e.key_ptr.*, e.value_ptr.* });
+        const name = entry.key_ptr.*;
+        const service = entry.value_ptr.*;
+        if (name.len == 0 or service.image.len == 0) return error.InvalidService;
+        for (service.depends_on) |dependency| {
+            if (!services.contains(dependency)) {
+                std.debug.print("Service {s} refers to missing dependency {s}\n", .{ name, dependency });
+                return error.UnknownDependency;
+            }
+            if (std.mem.eql(u8, name, dependency)) return error.SelfDependency;
         }
-        if (entry.value_ptr.restart) |r|
-            std.debug.print("  restart: {s}\n", .{r});
-        if (entry.value_ptr.depends_on) |deps| {
-            std.debug.print("  depends_on:", .{});
-            for (deps) |d| std.debug.print(" {s}", .{d});
-            std.debug.print("\n", .{});
-        }
+        try summaries.append(allocator, .{
+            .name = name,
+            .image = service.image,
+            .published_ports = service.ports,
+            .dependency_count = service.depends_on.len,
+        });
     }
-
-    const yaml_out = try serde.yaml.toSliceWith(allocator, compose, .{ .explicit_start = true });
-    defer allocator.free(yaml_out);
-    std.debug.print("\n=== Serialized YAML (explicit_start) ===\n{s}", .{yaml_out});
-
-    const json_out = try serde.json.toSliceWith(allocator, compose, .{ .pretty = true });
-    defer allocator.free(json_out);
-    std.debug.print("\n=== Cross-format: as JSON ===\n{s}\n", .{json_out});
-
-    const multi_doc =
-        \\---
-        \\name: doc1
-        \\value: 10
-        \\---
-        \\name: doc2
-        \\value: 20
-        \\
-    ;
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-    const docs = try serde.yaml.parseAllValues(arena2.allocator(), multi_doc);
-    std.debug.print("\n=== Multi-doc YAML: {} documents ===\n", .{docs.len});
-    for (docs, 0..) |doc, i| {
-        if (doc == .mapping) {
-            std.debug.print("Doc {}: {} keys\n", .{ i, doc.mapping.count() });
+    std.mem.sort(ServiceSummary, summaries.items, {}, struct {
+        fn lessThan(_: void, a: ServiceSummary, b: ServiceSummary) bool {
+            return std.mem.lessThan(u8, a.name, b.name);
         }
-    }
+    }.lessThan);
+
+    // Environment values can contain credentials; export only the inventory.
+    const output = try serde.json.toSliceWith(allocator, summaries.items, .{ .pretty = true });
+    defer allocator.free(output);
+    std.debug.print("Validated {d} services; inventory sorted by name\n", .{summaries.items.len});
+    try serde.compat.writeStdout(output);
+    try serde.compat.writeStdout("\n");
 }

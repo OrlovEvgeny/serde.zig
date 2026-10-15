@@ -1,101 +1,68 @@
 const std = @import("std");
 const serde = @import("serde");
 
-const Metadata = struct {
-    region: []const u8,
-    tier: []const u8,
-};
-
 const ServiceConfig = struct {
     service_name: []const u8,
     port_number: u16,
-    max_retries: u32,
-    is_enabled: bool,
-    metadata: Metadata,
-    description: ?[]const u8,
+    max_retries: u32 = 3,
+    is_enabled: bool = true,
+    metadata: struct { region: []const u8, tier: []const u8 },
+    description: []const u8 = "",
 };
-
+const InventoryRow = struct {
+    service_name: []const u8,
+    port_number: u16,
+    region: []const u8,
+    tier: []const u8,
+};
 const schema = .{ .rename_all = serde.NamingConvention.kebab_case };
+
+fn exportConfig(comptime label: []const u8, comptime Format: type, allocator: std.mem.Allocator, config: ServiceConfig) !void {
+    // ZON field names must be Zig identifiers with the current backend.
+    const export_schema = comptime if (Format == serde.zon) .{} else schema;
+    const bytes = try Format.toSliceSchema(allocator, config, export_schema);
+    defer allocator.free(bytes);
+    var restored = try Format.fromSliceManagedSchema(ServiceConfig, allocator, bytes, export_schema);
+    defer restored.deinit();
+    // Compare all fields using a stable representation, not only the name.
+    const before = try serde.json.toSlice(allocator, config);
+    defer allocator.free(before);
+    const after = try serde.json.toSlice(allocator, restored.value);
+    defer allocator.free(after);
+    if (!std.mem.eql(u8, before, after)) return error.RoundtripMismatch;
+    try serde.compat.writeStdout("=== " ++ label ++ " ===\n");
+    try serde.compat.writeStdout(bytes);
+    try serde.compat.writeStdout("\n\n");
+}
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
+    const input = try serde.compat.readFileAlloc(allocator, "examples/multi_format/service.toml", 64 * 1024);
+    defer allocator.free(input);
+    var parsed = try serde.toml.fromSliceManagedSchema(ServiceConfig, allocator, input, schema);
+    defer parsed.deinit();
+    const config = parsed.value;
+    if (config.service_name.len == 0 or config.port_number == 0 or config.max_retries > 10 or
+        config.metadata.region.len == 0 or config.metadata.tier.len == 0) return error.InvalidServiceConfig;
 
-    const config = ServiceConfig{
-        .service_name = "web-api",
-        .port_number = 8080,
-        .max_retries = 3,
-        .is_enabled = true,
-        .metadata = .{ .region = "us-east-1", .tier = "production" },
-        .description = "Main web service",
-    };
+    try exportConfig("JSON", serde.json, allocator, config);
+    try exportConfig("TOML", serde.toml, allocator, config);
+    try exportConfig("YAML", serde.yaml, allocator, config);
+    try exportConfig("XML", serde.xml, allocator, config);
+    try exportConfig("ZON", serde.zon, allocator, config);
+    try exportConfig("TOON", serde.toon, allocator, config);
 
-    const json_bytes = try serde.json.toSliceSchema(allocator, config, schema);
-    defer allocator.free(json_bytes);
-    std.debug.print("=== JSON ===\n{s}\n\n", .{json_bytes});
-
-    const toml_bytes = try serde.toml.toSliceSchema(allocator, config, schema);
-    defer allocator.free(toml_bytes);
-    std.debug.print("=== TOML ===\n{s}\n", .{toml_bytes});
-
-    const yaml_bytes = try serde.yaml.toSliceSchema(allocator, config, schema);
-    defer allocator.free(yaml_bytes);
-    std.debug.print("=== YAML ===\n{s}", .{yaml_bytes});
-
-    const xml_bytes = try serde.xml.toSliceWithSchema(allocator, config, .{ .xml_declaration = false, .pretty = true }, schema);
-    defer allocator.free(xml_bytes);
-    std.debug.print("\n=== XML ===\n{s}\n\n", .{xml_bytes});
-
-    const msgpack_bytes = try serde.msgpack.toSliceSchema(allocator, config, schema);
-    defer allocator.free(msgpack_bytes);
-    std.debug.print("=== MessagePack ({} bytes) ===\n", .{msgpack_bytes.len});
-    for (msgpack_bytes) |b| std.debug.print("{x:0>2}", .{b});
-    std.debug.print("\n\n", .{});
-
-    const zon_bytes = try serde.zon.toSliceSchema(allocator, config, schema);
-    defer allocator.free(zon_bytes);
-    std.debug.print("=== ZON ===\n{s}\n\n", .{zon_bytes});
-
-    const toon_bytes = try serde.toon.toSliceSchema(allocator, config, schema);
-    defer allocator.free(toon_bytes);
-    std.debug.print("=== TOON ===\n{s}\n\n", .{toon_bytes});
-
-    const flat_config: []const ServiceConfig = &.{config};
-    const csv_bytes = try serde.csv.toSliceSchema(allocator, flat_config, schema);
-    defer allocator.free(csv_bytes);
-    std.debug.print("=== CSV ===\n{s}\n", .{csv_bytes});
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const parsed_json = try serde.json.fromSliceSchema(ServiceConfig, arena.allocator(), json_bytes, schema);
-    std.debug.print("\n=== Roundtrip from JSON ===\n", .{});
-    std.debug.print("service_name={s} port_number={} max_retries={}\n", .{
-        parsed_json.service_name,
-        parsed_json.port_number,
-        parsed_json.max_retries,
-    });
-
-    const parsed_toml = try serde.toml.fromSliceSchema(ServiceConfig, arena.allocator(), toml_bytes, schema);
-    std.debug.print("Roundtrip from TOML: service_name={s} ok={}\n", .{
-        parsed_toml.service_name,
-        std.mem.eql(u8, parsed_toml.service_name, config.service_name),
-    });
-
-    const parsed_yaml = try serde.yaml.fromSliceSchema(ServiceConfig, arena.allocator(), yaml_bytes, schema);
-    std.debug.print("Roundtrip from YAML: service_name={s} ok={}\n", .{
-        parsed_yaml.service_name,
-        std.mem.eql(u8, parsed_yaml.service_name, config.service_name),
-    });
-
-    const parsed_msgpack = try serde.msgpack.fromSliceSchema(ServiceConfig, arena.allocator(), msgpack_bytes, schema);
-    std.debug.print("Roundtrip from MsgPack: service_name={s} ok={}\n", .{
-        parsed_msgpack.service_name,
-        std.mem.eql(u8, parsed_msgpack.service_name, config.service_name),
-    });
-
-    const parsed_toon = try serde.toon.fromSliceSchema(ServiceConfig, arena.allocator(), toon_bytes, schema);
-    std.debug.print("Roundtrip from TOON: service_name={s} ok={}\n", .{
-        parsed_toon.service_name,
-        std.mem.eql(u8, parsed_toon.service_name, config.service_name),
-    });
+    // CSV is an inventory projection: explicitly flatten the useful columns
+    // instead of implying that a nested config has a portable tabular shape.
+    const rows = [_]InventoryRow{.{
+        .service_name = config.service_name,
+        .port_number = config.port_number,
+        .region = config.metadata.region,
+        .tier = config.metadata.tier,
+    }};
+    const csv = try serde.csv.toSliceSchema(allocator, rows, schema);
+    defer allocator.free(csv);
+    try serde.compat.writeStdout("=== CSV inventory (selected fields) ===\n");
+    try serde.compat.writeStdout(csv);
+    std.debug.print("Verified full configuration roundtrips through 6 text formats\n", .{});
 }

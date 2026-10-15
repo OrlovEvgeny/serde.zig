@@ -1,5 +1,6 @@
-name = "my-service"
+name = "shipping-client"
 max-retries = 5
-base-url = "https://api.example.com"
-auth-token = "super-secret"
-log-level = "debug"
+base-url = "https://shipping.example.com"
+# Dummy credential for the example; never included in the public output.
+auth-token = "example-token-not-a-real-secret"
+log-level = "info"
