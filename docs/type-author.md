@@ -23,7 +23,7 @@ as `serialize(value, s)` and `deserialize(comptime T, allocator, d)`. Pass
 `.{.{ MyType, MyAdapter }}` to `serde.serializeWith` / `deserializeWith`, or the
 format's convenience functions where provided. Hooks on the type take priority
 over external adapters. A schema changes naming, defaults and layout; an adapter
-changes the value's representation. The [schema example](../examples/schema_override/main.zig)
+changes the value's representation. The [schema example](../examples/schema_override/README.md)
 shows external naming policies.
 
 Keep hooks format-independent by using scalar/container methods and generic core
