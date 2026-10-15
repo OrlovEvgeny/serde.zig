@@ -1,23 +1,22 @@
+# Compose-style subset used by this example. Images are illustrative.
 services:
   web:
     image: nginx:1.25
     ports:
-      - 80
-      - 443
-    environment:
-      NODE_ENV: production
-      LOG_LEVEL: info
-    restart: always
+      - "8080:80"
+    restart: unless-stopped
     depends_on:
       - api
-      - db
   api:
-    image: myapp:v2.1.0
+    image: orders-api:2.1.0
     ports:
-      - 3000
+      - "127.0.0.1:3000:3000"
     environment:
-      DATABASE_URL: postgres://db:5432/myapp
+      DATABASE_HOST: db
+      LOG_LEVEL: info
+    depends_on:
+      - db
   db:
     image: postgres:16
-    ports:
-      - 5432
+    environment:
+      POSTGRES_DB: orders

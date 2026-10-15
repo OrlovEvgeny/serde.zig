@@ -1,92 +1,42 @@
 const std = @import("std");
 const serde = @import("serde");
 
-const ServerConfig = struct {
-    host: []const u8 = "127.0.0.1",
-    port: u16 = 8080,
-    debug: bool = false,
-};
-
-const DatabaseConfig = struct {
-    url: []const u8,
-    max_connections: u32 = 10,
-    timeout_seconds: ?u32 = null,
-};
-
 const AppConfig = struct {
     app_name: []const u8,
-    version: []const u8,
-    server: ServerConfig,
-    database: DatabaseConfig,
+    server: struct {
+        host: []const u8 = "127.0.0.1",
+        port: u16 = 8080,
+        workers: u16 = 4,
+    },
+    database: struct {
+        host: []const u8,
+        port: u16 = 5432,
+        name: []const u8,
+        max_connections: u16 = 10,
+        timeout_seconds: u16 = 30,
+    },
 };
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
+    const input = try serde.compat.readFileAlloc(allocator, "examples/config_toml/service.toml", 64 * 1024);
+    defer allocator.free(input);
+    var parsed = try serde.toml.fromSliceManaged(AppConfig, allocator, input);
+    defer parsed.deinit();
+    const config = parsed.value;
+    // Type checking alone cannot reject a zero port or an empty pool.
+    if (config.app_name.len == 0 or config.server.host.len == 0 or
+        config.server.port == 0 or config.server.workers == 0) return error.InvalidServerConfig;
+    if (config.database.host.len == 0 or config.database.name.len == 0 or
+        config.database.port == 0 or config.database.max_connections == 0 or
+        config.database.timeout_seconds == 0) return error.InvalidDatabaseConfig;
 
-    const config = AppConfig{
-        .app_name = "my-service",
-        .version = "1.2.0",
-        .server = .{
-            .host = "0.0.0.0",
-            .port = 3000,
-            .debug = true,
-        },
-        .database = .{
-            .url = "postgres://localhost:5432/mydb",
-            .max_connections = 25,
-            .timeout_seconds = 30,
-        },
-    };
-
-    const toml_bytes = try serde.toml.toSlice(allocator, config);
-    defer allocator.free(toml_bytes);
-    std.debug.print("=== Serialized TOML ===\n{s}\n", .{toml_bytes});
-
-    const tmp_path = "config_example.toml";
-    try serde.compat.writeFile(tmp_path, toml_bytes);
-    defer serde.compat.deleteFile(tmp_path) catch {};
-
-    const file = try serde.compat.openFileForRead(tmp_path);
-    defer serde.compat.closeFile(file);
-    var file_buf: [4096]u8 = undefined;
-    var reader = serde.compat.fileReaderStreaming(file, &file_buf);
-    const file_content = try serde.compat.readerAllocRemaining(&reader, allocator, .unlimited);
-    defer allocator.free(file_content);
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const loaded = try serde.toml.fromSlice(AppConfig, arena.allocator(), file_content);
-    std.debug.print("=== Loaded from file ===\n", .{});
-    std.debug.print("app_name   = {s}\n", .{loaded.app_name});
-    std.debug.print("version    = {s}\n", .{loaded.version});
-    std.debug.print("server.host = {s}\n", .{loaded.server.host});
-    std.debug.print("server.port = {}\n", .{loaded.server.port});
-    std.debug.print("server.debug = {}\n", .{loaded.server.debug});
-    std.debug.print("database.url = {s}\n", .{loaded.database.url});
-    std.debug.print("database.max_connections = {}\n", .{loaded.database.max_connections});
-    std.debug.print("database.timeout_seconds = {?}\n", .{loaded.database.timeout_seconds});
-
-    const inline_toml =
-        \\app_name = "minimal"
-        \\version = "0.1.0"
-        \\
-        \\[server]
-        \\port = 9090
-        \\
-        \\[database]
-        \\url = "sqlite://local.db"
-        \\
-    ;
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-
-    const minimal = try serde.toml.fromSlice(AppConfig, arena2.allocator(), inline_toml);
-    std.debug.print("\n=== Inline TOML (defaults applied) ===\n", .{});
-    std.debug.print("app_name    = {s}\n", .{minimal.app_name});
-    std.debug.print("server.host = {s} (default)\n", .{minimal.server.host});
-    std.debug.print("server.port = {} (explicit)\n", .{minimal.server.port});
-    std.debug.print("server.debug = {} (default)\n", .{minimal.server.debug});
-    std.debug.print("database.max_connections = {} (default)\n", .{minimal.database.max_connections});
-    std.debug.print("database.timeout_seconds = {?} (default null)\n", .{minimal.database.timeout_seconds});
+    std.debug.print("{s}: listen {s}:{d}, {d} workers, database pool {d}\n", .{
+        config.app_name,       config.server.host,              config.server.port,
+        config.server.workers, config.database.max_connections,
+    });
+    // Export effective settings, including defaults, without rewriting the input.
+    const effective = try serde.toml.toSlice(allocator, config);
+    defer allocator.free(effective);
+    try serde.compat.writeStdout(effective);
 }

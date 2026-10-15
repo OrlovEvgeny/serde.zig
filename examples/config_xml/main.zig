@@ -1,12 +1,12 @@
 const std = @import("std");
 const serde = @import("serde");
+const options = serde;
 
 const Database = struct {
     host: []const u8,
     port: u16,
     name: []const u8,
 };
-
 const AppConfig = struct {
     id: []const u8,
     version: []const u8,
@@ -19,61 +19,35 @@ const AppConfig = struct {
         .xml_attribute = .{ .id, .version },
     };
 };
+const public_schema = .{ .skip = .{ .database = options.SkipMode.always } };
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
+    const input = try serde.compat.readFileAlloc(allocator, "examples/config_xml/config.xml", 64 * 1024);
+    defer allocator.free(input);
+    var parsed = try serde.xml.fromSliceManaged(AppConfig, allocator, input);
+    defer parsed.deinit();
+    const config = parsed.value;
+    if (!std.mem.eql(u8, config.version, "2.1")) return error.UnsupportedConfigVersion;
+    if (config.id.len == 0 or config.name.len == 0 or config.database.host.len == 0 or
+        config.database.name.len == 0 or config.database.port == 0) return error.InvalidConfig;
+    for (config.features) |feature| {
+        if (!std.mem.eql(u8, feature, "logging") and
+            !std.mem.eql(u8, feature, "metrics") and
+            !std.mem.eql(u8, feature, "tracing")) return error.UnsupportedFeature;
+    }
 
-    const file = try serde.compat.openFileForRead("examples/config_xml/config.xml");
-    defer serde.compat.closeFile(file);
-    var file_buf: [65536]u8 = undefined;
-    var file_reader = serde.compat.fileReaderStreaming(file, &file_buf);
-    const xml_input = try serde.compat.readerAllocRemaining(&file_reader, allocator, .unlimited);
-    defer allocator.free(xml_input);
+    // A legacy XML config can feed a JSON status endpoint without exposing its
+    // database connection settings. Entity references are decoded automatically.
+    const status = try serde.json.toSliceWithSchema(allocator, config, .{ .pretty = true }, public_schema);
+    defer allocator.free(status);
+    try serde.compat.writeStdout(status);
+    try serde.compat.writeStdout("\n");
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const config = try serde.xml.fromSlice(AppConfig, arena.allocator(), xml_input);
-
-    std.debug.print("=== Parsed XML Config ===\n", .{});
-    std.debug.print("id:       {s}\n", .{config.id});
-    std.debug.print("version:  {s}\n", .{config.version});
-    std.debug.print("name:     {s}\n", .{config.name});
-    std.debug.print("database: {s}:{d} / {s}\n", .{
-        config.database.host,
-        config.database.port,
-        config.database.name,
-    });
-    std.debug.print("features:", .{});
-    for (config.features) |f| std.debug.print(" {s}", .{f});
-    std.debug.print("\n", .{});
-
-    const xml_out = try serde.xml.toSliceWith(allocator, config, .{
+    const normalized = try serde.xml.toSliceWith(allocator, config, .{
         .xml_declaration = true,
         .pretty = true,
     });
-    defer allocator.free(xml_out);
-    std.debug.print("\n=== Serialized XML (pretty + declaration) ===\n{s}\n", .{xml_out});
-
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-    const config2 = try serde.xml.fromSlice(AppConfig, arena2.allocator(), xml_out);
-    std.debug.print("Roundtrip OK: id={s} version={s} name={s}\n", .{
-        config2.id,
-        config2.version,
-        config2.name,
-    });
-
-    const EscapeDemo = struct { text: []const u8 };
-    const demo = EscapeDemo{ .text = "a < b & c > d \"quoted\" 'single'" };
-    const escaped = try serde.xml.toSliceWith(allocator, demo, .{ .xml_declaration = false });
-    defer allocator.free(escaped);
-    std.debug.print("\n=== Entity escaping ===\n", .{});
-    std.debug.print("Original:  {s}\n", .{demo.text});
-    std.debug.print("XML:       {s}\n", .{escaped});
-
-    var arena3 = std.heap.ArenaAllocator.init(allocator);
-    defer arena3.deinit();
-    const roundtrip = try serde.xml.fromSlice(EscapeDemo, arena3.allocator(), escaped);
-    std.debug.print("Roundtrip: {s}\n", .{roundtrip.text});
+    defer allocator.free(normalized);
+    std.debug.print("Normalized XML (attributes and escaping retained):\n{s}\n", .{normalized});
 }
