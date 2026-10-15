@@ -48,10 +48,8 @@ const Sha256Digest = struct {
         defer serde.core.releaseString(deserializer, allocator, hex);
         if (hex.len != 64) return deserializer.raiseError(error.InvalidNumber);
         var result: @This() = undefined;
-        for (&result.bytes, 0..) |*byte, i| {
-            byte.* = std.fmt.parseInt(u8, hex[2 * i ..][0..2], 16) catch
-                return deserializer.raiseError(error.InvalidNumber);
-        }
+        _ = std.fmt.hexToBytes(&result.bytes, hex) catch
+            return deserializer.raiseError(error.InvalidNumber);
         return result;
     }
 };
