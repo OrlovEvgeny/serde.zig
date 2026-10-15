@@ -1,0 +1,7 @@
+{"timestamp":1700000001,"service":"orders-api","level":"info","message":"Server started"}
+{"timestamp":1700000002,"service":"orders-api","level":"debug","message":"Connected to database"}
+
+{"timestamp":1700000003,"service":"orders-api","level":"warn","message":"Slow query","request_id":"req-1042","duration_ms":2300}
+{"timestamp":1700000004,"service":"orders-api","level":"err","message":"Cache unavailable","request_id":"req-1043"}
+{"timestamp":1700000005,"service":"orders-api","level":"info","message":"Bad timing field","duration_ms":"fast"}
+{"timestamp":1700000006,"service":"orders-api","level":"info","message":"Request completed","request_id":"req-1044","duration_ms":12}
