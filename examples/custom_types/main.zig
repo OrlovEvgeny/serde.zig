@@ -6,7 +6,7 @@ const serde = @import("serde");
 const StringId = struct {
     value: u64,
 
-    pub fn zerdeSerialize(self: @This(), serializer: anytype) !void {
+    pub fn zerdeSerialize(self: @This(), serializer: anytype) @TypeOf(serializer.*).Error!void {
         var buf: [20]u8 = undefined;
         const s = std.fmt.bufPrint(&buf, "{d}", .{self.value}) catch unreachable;
         try serializer.serializeString(s);
@@ -25,17 +25,18 @@ const StringId = struct {
     }
 };
 
-/// Wraps a byte slice that is transmitted as a hex-encoded string.
-const HexBytes = struct {
-    data: []const u8,
+/// A SHA-256 checksum has exactly 32 bytes and 64 hexadecimal characters.
+const Sha256Digest = struct {
+    bytes: [32]u8,
 
-    pub fn zerdeSerialize(self: @This(), serializer: anytype) !void {
-        var buf: [1024]u8 = undefined;
-        if (self.data.len * 2 > buf.len) return error.OutOfMemory;
-        for (self.data, 0..) |byte, i| {
-            _ = std.fmt.bufPrint(buf[i * 2 ..][0..2], "{x:0>2}", .{byte}) catch unreachable;
+    pub fn zerdeSerialize(self: @This(), serializer: anytype) @TypeOf(serializer.*).Error!void {
+        var hex: [64]u8 = undefined;
+        const digits = "0123456789abcdef";
+        for (self.bytes, 0..) |byte, i| {
+            hex[2 * i] = digits[byte >> 4];
+            hex[2 * i + 1] = digits[byte & 15];
         }
-        try serializer.serializeString(buf[0 .. self.data.len * 2]);
+        try serializer.serializeString(&hex);
     }
 
     pub fn zerdeDeserialize(
@@ -43,68 +44,47 @@ const HexBytes = struct {
         allocator: std.mem.Allocator,
         deserializer: anytype,
     ) @TypeOf(deserializer.*).Error!@This() {
-        const str = try deserializer.deserializeString(allocator);
-        defer serde.core.releaseString(deserializer, allocator, str);
-        if (str.len % 2 != 0) return deserializer.raiseError(error.InvalidNumber);
-        const result = try allocator.alloc(u8, str.len / 2);
-        errdefer allocator.free(result);
-        for (0..result.len) |i| {
-            result[i] = std.fmt.parseInt(u8, str[i * 2 ..][0..2], 16) catch return deserializer.raiseError(error.InvalidNumber);
+        const hex = try deserializer.deserializeString(allocator);
+        defer serde.core.releaseString(deserializer, allocator, hex);
+        if (hex.len != 64) return deserializer.raiseError(error.InvalidNumber);
+        var result: @This() = undefined;
+        for (&result.bytes, 0..) |*byte, i| {
+            byte.* = std.fmt.parseInt(u8, hex[2 * i ..][0..2], 16) catch
+                return deserializer.raiseError(error.InvalidNumber);
         }
-        return .{ .data = result };
+        return result;
     }
 };
 
-const Order = struct {
+const Artifact = struct {
     id: StringId,
-    amount: f64,
-    label: []const u8,
-};
-
-const Signature = struct {
-    payload: HexBytes,
-    algorithm: []const u8,
+    filename: []const u8,
+    size_bytes: u64,
+    sha256: Sha256Digest,
 };
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
-
-    // --- StringId: u64 <-> JSON string ---
-    const order = Order{
+    const content = "invoice_id,total_cents\nord-1042,2995\n";
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(content, &digest, .{});
+    const artifact = Artifact{
         .id = .{ .value = 9223372036854775807 },
-        .amount = 42.50,
-        .label = "widgets",
+        .filename = "invoice.csv",
+        .size_bytes = content.len,
+        .sha256 = .{ .bytes = digest },
     };
-    const json = try serde.json.toSlice(allocator, order);
+    const json = try serde.json.toSliceWith(allocator, artifact, .{ .pretty = true });
     defer allocator.free(json);
-    std.debug.print("Order -> JSON:   {s}\n", .{json});
 
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const parsed_order = try serde.json.fromSlice(Order, arena.allocator(), json);
-    std.debug.print("Order <- JSON:   id={}, amount={d}, label=\"{s}\"\n\n", .{
-        parsed_order.id.value,
-        parsed_order.amount,
-        parsed_order.label,
+    var parsed = try serde.json.fromSliceManaged(Artifact, allocator, json);
+    defer parsed.deinit();
+    if (parsed.value.size_bytes != content.len or
+        !std.mem.eql(u8, &parsed.value.sha256.bytes, &digest)) return error.ChecksumMismatch;
+    if (parsed.value.id.value != artifact.id.value) return error.ArtifactIdMismatch;
+    std.debug.print("Verified {s}: {d} bytes, id {d}\n", .{
+        parsed.value.filename, parsed.value.size_bytes, parsed.value.id.value,
     });
-
-    // --- HexBytes: []const u8 <-> hex string ---
-    const sig = Signature{
-        .payload = .{ .data = &.{ 0xDE, 0xAD, 0xBE, 0xEF } },
-        .algorithm = "sha256",
-    };
-    const sig_json = try serde.json.toSlice(allocator, sig);
-    defer allocator.free(sig_json);
-    std.debug.print("Signature -> JSON: {s}\n", .{sig_json});
-
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-
-    const parsed_sig = try serde.json.fromSlice(Signature, arena2.allocator(), sig_json);
-    std.debug.print("Signature <- JSON: payload=", .{});
-    for (parsed_sig.payload.data) |byte| {
-        std.debug.print("{x:0>2}", .{byte});
-    }
-    std.debug.print(", algorithm=\"{s}\"\n", .{parsed_sig.algorithm});
+    try serde.compat.writeStdout(json);
+    try serde.compat.writeStdout("\n");
 }

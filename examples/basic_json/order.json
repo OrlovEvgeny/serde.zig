@@ -1,0 +1,8 @@
+{
+  "order_id": "ord-1042",
+  "currency": "EUR",
+  "items": [
+    {"sku": "COFFEE-250", "quantity": 2, "unit_price_cents": 1250},
+    {"sku": "FILTER-100", "quantity": 1, "unit_price_cents": 495}
+  ]
+}

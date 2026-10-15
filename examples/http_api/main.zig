@@ -1,122 +1,74 @@
 const std = @import("std");
 const serde = @import("serde");
-const opts = serde;
-
-const Status = enum(u8) {
-    ok = 0,
-    failed = 1,
-    pending = 2,
-
-    pub const serde = .{
-        .enum_repr = opts.EnumRepr.integer,
-    };
-};
+const options = serde;
 
 const Event = union(enum) {
-    created: struct { by: []const u8 },
-    updated: struct { by: []const u8, changes: u32 },
-    deleted: void,
+    created: struct { order_id: []const u8, total_cents: u64 },
+    shipped: struct { order_id: []const u8, tracking_number: []const u8 },
+    cancelled: struct { order_id: []const u8, reason: []const u8 },
 
-    pub const serde = .{
-        .tag = opts.UnionTag.internal,
-        .tag_field = "event_type",
-    };
+    pub const serde = .{ .tag = options.UnionTag.internal, .tag_field = "event_type" };
 };
-
 const Metadata = struct {
     request_id: []const u8,
-    trace_id: []const u8 = "",
-};
+    received_at: i64,
 
-const ApiResponse = struct {
-    user_id: u64,
-    display_name: []const u8,
-    email: ?[]const u8,
-    score: f64 = 0.0,
-    status: Status,
-    tags: []const []const u8 = &.{},
-    api_key: []const u8 = "",
-    created_at: i64,
+    pub const serde = .{ .rename_all = options.NamingConvention.camel_case };
+};
+const Acknowledgement = struct {
+    order_id: []const u8,
+    status: enum { queued, tracking_updated, cancelled },
+    tracking_number: ?[]const u8 = null,
+    internal_token: []const u8 = "",
     metadata: Metadata,
 
     pub const serde = .{
-        .rename = .{
-            .user_id = "id",
-        },
-        .rename_all = opts.NamingConvention.camel_case,
+        .rename_all = options.NamingConvention.camel_case,
         .skip = .{
-            .api_key = opts.SkipMode.always,
-            .email = opts.SkipMode.null,
-            .tags = opts.SkipMode.empty,
+            .internal_token = options.SkipMode.always,
+            .tracking_number = options.SkipMode.null,
         },
         .flatten = &[_][]const u8{"metadata"},
-        .with = .{
-            .created_at = opts.helpers.UnixTimestampMs,
-        },
     };
 };
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
+    const body = try serde.compat.readFileAlloc(allocator, "examples/http_api/webhook.json", 64 * 1024);
+    defer allocator.free(body);
+    var event = try serde.json.fromSliceManaged(Event, allocator, body);
+    defer event.deinit();
 
-    // --- Build an API response with all serde features ---
-    const tags: []const []const u8 = &.{};
-    const resp = ApiResponse{
-        .user_id = 42,
-        .display_name = "Alice",
-        .email = null,
-        .score = 98.5,
-        .status = .ok,
-        .tags = tags,
-        .api_key = "super-secret-key-12345",
-        .created_at = 1700000000,
-        .metadata = .{
-            .request_id = "req-abc123",
-            .trace_id = "trace-def456",
-        },
+    // This is the serialization layer of a handler. A server would supply the
+    // authenticated request body, request ID and clock value.
+    var ack = Acknowledgement{
+        .order_id = "",
+        .status = .queued,
+        .internal_token = "example-internal-token",
+        .metadata = .{ .request_id = "req-7f32", .received_at = 1700000000 },
     };
+    switch (event.value) {
+        .created => |order| {
+            if (order.total_cents == 0) return error.EmptyOrder;
+            ack.order_id = order.order_id;
+        },
+        .shipped => |shipment| {
+            if (shipment.tracking_number.len == 0) return error.MissingTrackingNumber;
+            ack.order_id = shipment.order_id;
+            ack.status = .tracking_updated;
+            ack.tracking_number = shipment.tracking_number;
+        },
+        .cancelled => |cancellation| {
+            if (cancellation.reason.len == 0) return error.MissingCancellationReason;
+            ack.order_id = cancellation.order_id;
+            ack.status = .cancelled;
+        },
+    }
+    if (ack.order_id.len == 0) return error.MissingOrderId;
 
-    // --- Serialize to pretty JSON ---
-    const json = try serde.json.toSliceWith(allocator, resp, .{ .pretty = true });
-    defer allocator.free(json);
-    std.debug.print("=== Serialized (pretty) ===\n{s}\n", .{json});
-
-    // Key serde behaviors to observe in the output:
-    //   "id"          — renamed from user_id
-    //   "displayName" — rename_all camelCase
-    //   no "apiKey"   — skip always
-    //   no "email"    — skip null
-    //   no "tags"     — skip empty
-    //   "requestId"/"traceId" — flattened from metadata to top level
-    //   "createdAt"   — 1700000000000 (ms, via UnixTimestampMs)
-    //   "status"      — 0 (enum_repr = .integer)
-
-    // --- Deserialize back ---
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    const parsed = try serde.json.fromSlice(ApiResponse, arena.allocator(), json);
-    std.debug.print("\n=== Deserialized ===\n", .{});
-    std.debug.print("user_id      = {}\n", .{parsed.user_id});
-    std.debug.print("display_name = {s}\n", .{parsed.display_name});
-    std.debug.print("email        = {?s}\n", .{parsed.email});
-    std.debug.print("score        = {d}\n", .{parsed.score});
-    std.debug.print("status       = .{s} (integer repr)\n", .{@tagName(parsed.status)});
-    std.debug.print("tags.len     = {} (empty slice)\n", .{parsed.tags.len});
-    std.debug.print("api_key      = \"{s}\" (default, was skip'd)\n", .{parsed.api_key});
-    std.debug.print("created_at   = {} (seconds, deserialized from ms)\n", .{parsed.created_at});
-    std.debug.print("request_id   = {s} (flattened from metadata)\n", .{parsed.metadata.request_id});
-    std.debug.print("trace_id     = {s} (flattened from metadata)\n", .{parsed.metadata.trace_id});
-
-    // --- Internal-tagged union example ---
-    const created_event: Event = .{ .created = .{ .by = "admin" } };
-    const event_json = try serde.json.toSlice(allocator, created_event);
-    defer allocator.free(event_json);
-    std.debug.print("\n=== Tagged union (internal) ===\n{s}\n", .{event_json});
-
-    var arena2 = std.heap.ArenaAllocator.init(allocator);
-    defer arena2.deinit();
-
-    const parsed_event = try serde.json.fromSlice(Event, arena2.allocator(), event_json);
-    std.debug.print("Parsed event: created by \"{s}\"\n", .{parsed_event.created.by});
+    const response = try serde.json.toSliceWith(allocator, ack, .{ .pretty = true });
+    defer allocator.free(response);
+    std.debug.print("HTTP 202 application/json (simulated handler)\n", .{});
+    try serde.compat.writeStdout(response);
+    try serde.compat.writeStdout("\n");
 }
