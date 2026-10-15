@@ -1,0 +1,9 @@
+service-name = "orders-api"
+port-number = 8080
+max-retries = 5
+is-enabled = true
+description = "Order intake service"
+
+[metadata]
+region = "eu-west-1"
+tier = "staging"
