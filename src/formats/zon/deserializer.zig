@@ -74,11 +74,20 @@ pub const Deserializer = struct {
     }
 
     pub fn deserializeString(self: *Deserializer, allocator: Allocator) Error![]const u8 {
+        return self.readString(allocator, false);
+    }
+
+    /// Transfer a mutable allocation, regardless of the borrowing mode.
+    pub fn deserializeStringOwned(self: *Deserializer, allocator: Allocator) Error![]u8 {
+        return self.readString(allocator, true);
+    }
+
+    fn readString(self: *Deserializer, allocator: Allocator, comptime owned: bool) Error!(if (owned) []u8 else []const u8) {
         self.skipWhitespace();
         if (self.pos >= self.input.len) return error.UnexpectedEof;
         if (self.input[self.pos] != '"') return error.WrongType;
         self.pos += 1;
-        return self.readStringContent(allocator);
+        return self.readStringContent(allocator, owned);
     }
 
     pub fn deserializeStringBorrowed(self: *Deserializer) Error![]const u8 {
@@ -257,7 +266,7 @@ pub const Deserializer = struct {
         return null;
     }
 
-    fn readStringContent(self: *Deserializer, allocator: Allocator) Error![]const u8 {
+    fn readStringContent(self: *Deserializer, allocator: Allocator, comptime owned: bool) Error!(if (owned) []u8 else []const u8) {
         var has_escape = false;
         const start = self.pos;
         var scan = self.pos;
@@ -276,12 +285,12 @@ pub const Deserializer = struct {
         self.pos = scan + 1;
 
         if (!has_escape) {
-            if (self.borrow_strings) return raw;
+            if (!owned and self.borrow_strings) return raw;
             const copy = allocator.alloc(u8, raw.len) catch return error.OutOfMemory;
             @memcpy(copy, raw);
             return copy;
         }
-        if (self.borrow_strings) return error.InvalidEscape;
+        if (!owned and self.borrow_strings) return error.InvalidEscape;
         return unescapeZonString(allocator, raw);
     }
 
@@ -420,7 +429,7 @@ fn errorFromAny(err: anyerror) DeserializeError {
     };
 }
 
-fn unescapeZonString(allocator: Allocator, raw: []const u8) DeserializeError![]const u8 {
+fn unescapeZonString(allocator: Allocator, raw: []const u8) DeserializeError![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var i: usize = 0;

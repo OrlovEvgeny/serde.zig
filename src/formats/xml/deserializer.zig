@@ -67,14 +67,23 @@ pub const Deserializer = struct {
     }
 
     pub fn deserializeString(self: *Deserializer, allocator: Allocator) Error![]const u8 {
+        return self.readString(allocator, false);
+    }
+
+    /// Transfer a mutable allocation, regardless of the borrowing mode.
+    pub fn deserializeStringOwned(self: *Deserializer, allocator: Allocator) Error![]u8 {
+        return self.readString(allocator, true);
+    }
+
+    fn readString(self: *Deserializer, allocator: Allocator, comptime owned: bool) Error!(if (owned) []u8 else []const u8) {
         const text = try self.readTextContent();
         if (!Scanner.textHasEntities(text)) {
-            if (self.borrow_strings) return text;
+            if (!owned and self.borrow_strings) return text;
             const copy = allocator.alloc(u8, text.len) catch return error.OutOfMemory;
             @memcpy(copy, text);
             return copy;
         }
-        if (self.borrow_strings) return error.MalformedXml;
+        if (!owned and self.borrow_strings) return error.MalformedXml;
         return Scanner.unescapeEntities(allocator, text) catch |err| if (err == error.OutOfMemory) error.OutOfMemory else error.MalformedXml;
     }
 
@@ -438,7 +447,7 @@ fn deserializeFromText(comptime T: type, text: []const u8, allocator: Allocator,
         return std.fmt.parseFloat(T, text) catch error.InvalidNumber;
     } else if (k == .string) {
         if (!Scanner.textHasEntities(text)) {
-            if (borrow) return text;
+            if (T != []u8 and borrow) return text;
             const copy = allocator.alloc(u8, text.len) catch return error.OutOfMemory;
             @memcpy(copy, text);
             return copy;

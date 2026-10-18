@@ -96,7 +96,8 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
     return result;
 }
 
-/// Deserialize with zero-copy borrowing and an external schema.
+/// Deserialize with an external schema, borrowing eligible const strings.
+/// Mutable strings are allocated separately and decode escapes.
 pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     var deser = Deserializer.initBorrowed(input);
     const result = try core_deserialize.deserializeSchema(T, allocator, &deser, schema, .{});
@@ -114,10 +115,11 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
     return result;
 }
 
-/// Deserialize a value of type T from a ZON byte slice, borrowing strings from the input.
-/// String fields will point directly into the input buffer — the input must outlive the result.
-/// Falls back to error.InvalidEscape if any string contains escape sequences.
-/// Still requires an allocator for structs, slices, and other heap-allocated structures.
+/// Deserialize a value of type T, borrowing eligible const strings from the input.
+/// Const string fields point into input, which must outlive the result.
+/// Escapes in const strings still return error.InvalidEscape. Mutable []u8
+/// strings are separately allocated and decode escapes. Use an arena for mixed
+/// results; do not pass them to freeAllocated.
 pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     var deser = Deserializer.initBorrowed(input);
     const result = try core_deserialize.deserialize(T, allocator, &deser, .{});

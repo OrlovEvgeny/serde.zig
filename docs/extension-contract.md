@@ -65,6 +65,7 @@ A full deserializer `D` declares `Error`. Receivers below are `self: *D`:
 | `deserializeBool` | none | `Error!bool` |
 | `deserializeInt`, `deserializeFloat` | `comptime T: type` | `Error!T` |
 | `deserializeString` | `allocator: std.mem.Allocator` | `Error![]const u8` |
+| Optional `deserializeStringOwned` | `allocator: std.mem.Allocator` | `Error![]u8` |
 | `deserializeVoid` | none | `Error!void` |
 | `deserializeOptional` | `comptime T: type, allocator` | `Error!?T` |
 | `deserializeEnum` | `comptime T: type` | `Error!T` |
@@ -79,6 +80,19 @@ the default external-tag representation; schemas and other tagging layouts use
 the generic engine. Optional `deserializeBytes(allocator)` reads byte payloads.
 The old `deserializeSeq(T, allocator)` convenience method is retained by built-ins
 but is not required by the current core.
+
+For `[]u8`, the core prefers optional
+`deserializeStringOwned(self: *D, allocator: std.mem.Allocator) Error![]u8`.
+It must transfer mutable storage allocated with the supplied allocator,
+independently of the backend's borrowing mode. Decode escapes directly into
+that storage. `assertDeserializer` validates this method when present; existing
+backends need not add it.
+
+Without that method, the core calls `deserializeString`: it copies slices within
+`serde_protocol.borrowedInput` (or the legacy borrowing fields) and reuses owned
+allocations without another copy. Empty strings need no backing storage. The
+fallback retains any escape-decoding restrictions of `deserializeString`.
+Custom hooks and external adapters still take precedence over this dispatch.
 
 A map access object declares `Error` and provides:
 
@@ -106,7 +120,9 @@ A hook's return type should use the backend's error set to avoid widening it.
 ## Ownership
 
 Allocated strings, pointers, sequences and map storage transfer to the returned
-value. Partial results must be released on failure using the supplied allocator.
+value. Owned string storage must permit mutation after transfer, even when
+returned as `[]const u8`. Input views must never be mutated. Partial results must
+be released on failure using the supplied allocator.
 Borrowed slices and schema/default literals are not owned. `Parsed(T)` owns an
 arena at a stable address, including allocators retained by managed maps. It can
 be moved, but must not be copied and deinitialized twice.

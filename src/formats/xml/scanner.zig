@@ -76,8 +76,8 @@ pub const Scanner = struct {
     }
 
     /// Unescape XML entities in a text or attribute value.
-    /// Returns the input directly when no entities are present (zero-copy).
-    pub fn unescapeEntities(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    /// Returns mutable storage owned by the caller, including when no entities occur.
+    pub fn unescapeEntities(allocator: std.mem.Allocator, raw: []const u8) ![]u8 {
         if (!textHasEntities(raw)) {
             const copy = try allocator.alloc(u8, raw.len);
             @memcpy(copy, raw);

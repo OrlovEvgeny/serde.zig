@@ -82,7 +82,9 @@ pub fn fromSlice(comptime T: type, allocator: std.mem.Allocator, input: []const 
     return xmlDeserialize(T, allocator, input, false, {});
 }
 
-/// Deserialize with zero-copy string borrowing.
+/// Deserialize with borrowing for eligible const strings; mutable strings are owned.
+/// Mutable strings decode entities. Use an arena for mixed results and keep
+/// input alive; do not pass borrowed results to freeAllocated.
 pub fn fromSliceBorrowed(comptime T: type, allocator: std.mem.Allocator, input: []const u8) !T {
     return xmlDeserialize(T, allocator, input, true, {});
 }
@@ -106,7 +108,8 @@ pub fn fromSliceSchema(comptime T: type, allocator: std.mem.Allocator, input: []
     return xmlDeserialize(T, allocator, input, false, schema);
 }
 
-/// Deserialize with zero-copy borrowing and an external schema.
+/// Deserialize with an external schema, borrowing eligible const strings.
+/// Mutable strings are allocated separately and decode entities.
 pub fn fromSliceBorrowedSchema(comptime T: type, allocator: std.mem.Allocator, input: []const u8, comptime schema: anytype) !T {
     return xmlDeserialize(T, allocator, input, true, schema);
 }

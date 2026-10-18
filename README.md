@@ -73,7 +73,7 @@ All nine formats share a generic core and similar convenience functions. Root ty
 
 Out-of-band schemas serialize the same type differently in different contexts without modifying the type. This helps with third-party types and API versioning.
 
-For JSON, `fromSliceBorrowed` returns string slices that point directly into the input buffer when no escape sequences are present. Strings are not copied, though containers and custom hooks can still allocate.
+For JSON, `fromSliceBorrowed` returns `[]const u8` slices that point directly into the input buffer when no escape sequences are present. Mutable `[]u8` strings are allocated separately; containers and custom hooks can also allocate.
 
 Unsupported type operations and ambiguous field names can be rejected at compile time. Missing input fields and malformed input are runtime errors. Structural backend checks are opt-in.
 
@@ -210,6 +210,18 @@ defer parsed.deinit();
 useUser(parsed.value);
 ```
 
+Use `[]u8` to edit a parsed string directly, then serialize the same type:
+
+```zig
+const Foo = struct { string: []u8 };
+var parsed = try serde.json.fromSliceManaged(Foo, allocator, "{\"string\":\"hello\"}");
+defer parsed.deinit();
+parsed.value.string[0] = 'H';
+const output = try serde.json.toSlice(allocator, parsed.value);
+defer allocator.free(output);
+// output: {"string":"Hello"}
+```
+
 The result owns a separate arena with a stable address. Custom adapters allocate
 into the same arena through the allocator they are given. You can move the
 result, but keep one owner, call `deinit` exactly once, and do not free its
@@ -240,7 +252,7 @@ and release them after conversion.
 
 ### Zero-copy deserialization
 
-When strings in the JSON input contain no escape sequences, `fromSliceBorrowed` returns slices pointing directly into the input buffer:
+For `[]const u8` strings without escapes, JSON `fromSliceBorrowed` returns slices pointing directly into the input buffer:
 
 ```zig
 const input = "{\"name\":\"alice\",\"id\":1}";
@@ -248,10 +260,16 @@ const msg = try serde.json.fromSliceBorrowed(Msg, allocator, input);
 // msg.name points into input, input must outlive msg
 ```
 
-The input must outlive the result. An escaped string fails with `InvalidEscape`
-instead of being copied into a new allocation, and that holds inside arrays and
-nested containers too. Use a separate arena for container metadata, and do not
-pass borrowed results to `freeAllocated`.
+The input must outlive the result and must not be modified through returned
+views. Escaped `[]const u8` strings still fail with `InvalidEscape`, including
+inside arrays and nested containers. Mutable `[]u8` strings always own their
+storage and decode escapes, even in borrowed mode. ZON and XML also allocate
+mutable strings separately; XML decodes entities in mutable text and attributes.
+Existing const-string borrowing restrictions remain unchanged.
+
+For results mixing borrowed const strings and owned mutable strings, pass a
+separate arena allocator and call `arena.deinit()` when finished. Keep the input
+alive until then. Do not pass borrowed or mixed results to `freeAllocated`.
 
 ### Pretty-printed output
 
