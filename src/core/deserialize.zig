@@ -66,7 +66,7 @@ fn deserializeSchemaImpl(comptime T: type, allocator: Allocator, deserializer: a
         .bool => deserializer.deserializeBool(),
         .int => deserializer.deserializeInt(T),
         .float => deserializer.deserializeFloat(T),
-        .string => deserializer.deserializeString(allocator),
+        .string => if (T == []u8) deserializeMutableString(allocator, deserializer) else deserializer.deserializeString(allocator),
         .void => deserializer.deserializeVoid(),
         .optional => deserializeOptional(Child(T), allocator, deserializer, map),
         .@"struct" => deserializeStructFieldsSchema(T, allocator, deserializer, schema, map),
@@ -85,6 +85,22 @@ fn deserializeSchemaImpl(comptime T: type, allocator: Allocator, deserializer: a
         .map => deserializeMapSchema(T, allocator, deserializer, map),
         else => @compileError("Cannot auto-deserialize: " ++ @typeName(T)),
     };
+}
+
+/// Legacy backends transfer owned allocations through a const slice. Only input
+/// views need copying; never cast away the constness of borrowed input.
+fn deserializeMutableString(allocator: Allocator, d: anytype) @TypeOf(d.*).Error![]u8 {
+    if (@hasDecl(@TypeOf(d.*), "deserializeStringOwned")) return d.deserializeStringOwned(allocator);
+    const value = try d.deserializeString(allocator);
+    // Empty slices may point at static literals, even in owned mode.
+    if (value.len == 0) return allocator.alloc(u8, 0);
+    if (ownership.borrowedInput(d)) |input| {
+        const ptr = @intFromPtr(value.ptr);
+        if (ptr >= @intFromPtr(input.ptr) and ptr - @intFromPtr(input.ptr) <= input.len)
+            return allocator.dupe(u8, value);
+    }
+    // The backend transferred an allocation made with this allocator.
+    return @constCast(value);
 }
 
 fn findOobAdapter(comptime T: type, comptime map: anytype) ?type {

@@ -127,6 +127,10 @@ pub fn assertDeserializer(comptime D: type) void {
         checkResult(D, "deserializeInt", @TypeOf(d.deserializeInt(i32)), i32);
         checkResult(D, "deserializeFloat", @TypeOf(d.deserializeFloat(f64)), f64);
         checkResult(D, "deserializeString", @TypeOf(d.deserializeString(allocator)), []const u8);
+        if (@hasDecl(D, "deserializeStringOwned")) {
+            require(D, "deserializeStringOwned");
+            checkResult(D, "deserializeStringOwned", @TypeOf(d.deserializeStringOwned(allocator)), []u8);
+        }
         checkResult(D, "deserializeVoid", @TypeOf(d.deserializeVoid()), void);
         checkResult(D, "deserializeOptional", @TypeOf(d.deserializeOptional(i32, allocator)), ?i32);
         const E = enum { item };

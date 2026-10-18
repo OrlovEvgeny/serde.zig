@@ -115,20 +115,29 @@ pub const Deserializer = struct {
     }
 
     pub fn deserializeString(self: *Deserializer, allocator: Allocator) Error![]const u8 {
+        return self.readString(allocator, false);
+    }
+
+    /// Transfer a mutable allocation, regardless of the borrowing mode.
+    pub fn deserializeStringOwned(self: *Deserializer, allocator: Allocator) Error![]u8 {
+        return self.readString(allocator, true);
+    }
+
+    fn readString(self: *Deserializer, allocator: Allocator, comptime owned: bool) Error!(if (owned) []u8 else []const u8) {
         const tok = try self.scanner.next();
         switch (tok) {
             .string => |raw| {
                 if (!self.scanner.last_string_has_escape) {
-                    if (self.borrow_strings) return raw;
+                    if (!owned and self.borrow_strings) return raw;
                     const copy = allocator.alloc(u8, raw.len) catch return error.OutOfMemory;
                     @memcpy(copy, raw);
                     return copy;
                 }
-                if (self.borrow_strings) return error.InvalidEscape;
+                if (!owned and self.borrow_strings) return error.InvalidEscape;
                 return try unescapeString(allocator, raw);
             },
             .null_lit => {
-                if (self.borrow_strings) return "";
+                if (!owned and self.borrow_strings) return "";
                 const empty = allocator.alloc(u8, 0) catch return error.OutOfMemory;
                 return empty;
             },
@@ -428,7 +437,7 @@ fn errorFromAny(err: anyerror) DeserializeError {
     };
 }
 
-fn unescapeString(allocator: Allocator, raw: []const u8) DeserializeError![]const u8 {
+fn unescapeString(allocator: Allocator, raw: []const u8) DeserializeError![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     // Every escape shrinks: two-byte escapes yield one byte, \uXXXX yields at

@@ -13,6 +13,8 @@ for fixture, expected in (("flatten_collision.zig", "Ambiguous serde field name"
                           ("wrong_container_end.zig", "expected an error union with payload void"),
                           ("undeclared_method_error.zig", "returned error Undeclared is missing from Error"),
                           ("unrestricted_method_errors.zig", "returned errors exceed the declared Error set"),
+                          ("wrong_owned_string.zig", "deserializeStringOwned: expected an error union with payload []u8"),
+                          ("undeclared_owned_string_error.zig", "deserializeStringOwned: returned error Undeclared is missing from Error"),
                           ("missing_replay.zig", "union replay requires serde_protocol.checkpoint")):
     result = subprocess.run([
         "zig", "build-exe", "-fno-emit-bin", "--dep", "serde",

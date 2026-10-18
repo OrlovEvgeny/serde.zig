@@ -196,7 +196,7 @@ pub const Scanner = struct {
 };
 
 /// Unescape a quoted field: replace doubled quotes with single quotes.
-pub fn unquoteField(allocator: std.mem.Allocator, raw: []const u8, quote: u8) ![]const u8 {
+pub fn unquoteField(allocator: std.mem.Allocator, raw: []const u8, quote: u8) ![]u8 {
     // Fast path: no doubled quotes present.
     if (std.mem.indexOf(u8, raw, &.{ quote, quote }) == null) {
         return allocator.dupe(u8, raw);
